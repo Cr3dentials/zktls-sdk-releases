@@ -1,0 +1,76 @@
+// One tree run's result: what the SDK posts to the run's result URL, gzipped, once the run ends.
+// The backend vendors this file unmodified. A field is never renumbered or reused; a retired one is
+// reserved by number and name.
+//
+// The platform's data travels as the JSON it already is, one compact document per source, and the
+// claim as its canonical bytes: neither is re-encoded.
+syntax = "proto3";
+
+package zktls.tree.v1;
+
+message TreeRunResult {
+  // 1 for this schema.
+  uint32 version = 1;
+  // The pack the run ran, and the SHA-256 of its JSON (32 bytes), as the app pinned it.
+  string pack_id = 2;
+  string pack_version = 3;
+  bytes pack_digest = 4;
+  RunStatus status = 5;
+  // Unix milliseconds on the phone.
+  uint64 started_at_ms = 6;
+  uint64 finished_at_ms = 7;
+  // The observed sources, in the order the tree saved them, then the attested one.
+  repeated Source sources = 8;
+  // The zktls.claim.v2 over the attested source, in its canonical encoding with its signature;
+  // empty when no source is ATTESTED.
+  bytes claim = 9;
+  // Why the tree failed, in the pack's own words; empty on success.
+  string error = 10;
+  // Every failure on the way, at most 20.
+  repeated string error_log = 11;
+  Stats stats = 12;
+  // The SDK's version, as its package names it.
+  string sdk_version = 13;
+}
+
+enum RunStatus {
+  RUN_STATUS_UNSPECIFIED = 0;
+  // The tree succeeded, every source read to its end, and an attested pack's claim verified.
+  RUN_STATUS_SUCCESS = 1;
+  // As SUCCESS, but a cap ended at least one source before it said it was done.
+  RUN_STATUS_PARTIAL = 2;
+  // The tree failed; `error` says why, and the sources hold what it stored before.
+  RUN_STATUS_ERROR = 3;
+}
+
+enum Evidence {
+  EVIDENCE_UNSPECIFIED = 0;
+  // The phone read it in the page. Nothing vouches for it.
+  EVIDENCE_OBSERVED = 1;
+  // An enclave read it from the origin and signed it; `claim` carries it, and the claim's outputs,
+  // not `json`, are what to store.
+  EVIDENCE_ATTESTED = 2;
+}
+
+message Source {
+  // The key the pack stores the source under.
+  string store_as = 1;
+  Evidence evidence = 2;
+  // OBSERVED: the source as the tree stored it, compact JSON. ATTESTED: the claim's outputs as
+  // JSON, `[{"name", "value"}]`, for reading only.
+  bytes json = 3;
+  uint32 pages = 4;
+  // Rows collected, or values attested.
+  uint64 rows = 5;
+  // Reply bytes read.
+  uint64 bytes = 6;
+  // False when a cap ended paging before the source said it was done.
+  bool complete = 7;
+}
+
+message Stats {
+  // Requests the tree made in the page, and how many succeeded.
+  uint32 api_calls = 1;
+  uint32 successful_calls = 2;
+  uint64 duration_ms = 3;
+}

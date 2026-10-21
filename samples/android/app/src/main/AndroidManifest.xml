@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The SDK's manifest merges INTERNET, ACCESS_NETWORK_STATE, FOREGROUND_SERVICE and its shortService. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="zkTLS Sample" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

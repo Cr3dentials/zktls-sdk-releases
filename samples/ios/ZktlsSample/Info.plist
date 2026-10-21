@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>ZKTLS_BASE_URL</key>
+	<string>$(ZKTLS_BASE_URL)</string>
+	<key>ZKTLS_APP_CREDENTIAL</key>
+	<string>$(ZKTLS_APP_CREDENTIAL)</string>
+	<key>ZKTLS_USER_ID_HASH</key>
+	<string>$(ZKTLS_USER_ID_HASH)</string>
+	<key>ZKTLS_PROFILE_ID</key>
+	<string>$(ZKTLS_PROFILE_ID)</string>
+	<key>ZKTLS_POLICY_ID</key>
+	<string>$(ZKTLS_POLICY_ID)</string>
+	<key>ZKTLS_CLIENT_REGION</key>
+	<string>$(ZKTLS_CLIENT_REGION)</string>
+	<key>ZKTLS_TRUST_BUNDLE_URL</key>
+	<string>$(ZKTLS_TRUST_BUNDLE_URL)</string>
+	<key>ZKTLS_TRUST_OPERATOR_KEY</key>
+	<string>$(ZKTLS_TRUST_OPERATOR_KEY)</string>
+	<key>ZKTLS_POLICY_BUNDLE_URL</key>
+	<string>$(ZKTLS_POLICY_BUNDLE_URL)</string>
+	<key>ZKTLS_POLICY_BUNDLE_DIGEST</key>
+	<string>$(ZKTLS_POLICY_BUNDLE_DIGEST)</string>
+	<key>ZKTLS_RUNS_URL</key>
+	<string>$(ZKTLS_RUNS_URL)</string>
+	<key>ZKTLS_PLATFORMS</key>
+	<string>$(ZKTLS_PLATFORMS)</string>
+</dict>
+</plist>
