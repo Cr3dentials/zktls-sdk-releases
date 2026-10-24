@@ -1,11 +1,16 @@
-# Platform packs and `runTree`
+# Platform packs and `runTree`, in the lab
+
+A partner's app runs platforms with `Zktls.verify` ([iOS](integration-ios.md),
+[Android](integration-android.md)), which fetches each platform's pack, the bundles and the keys itself
+and runs each pack with `runTree`. This page is for pack authors and the device lab: what a pack is, how
+one is made and published, and how to run one on its own with `runTree`, behind the SDK's lab opt-in. A
+partner's app needs none of it, and the lab API may change in any release.
 
 `runTree` runs a platform's **pack** in the SDK's own WebView while the user is present: the user signs
 in to the platform and the pack collects their data in the page. For a pack that attests, the SDK then
 hands the user's session to an enclave, the **attester**, which reads the platform's summary itself and
 signs the figures it extracts; the user may close the app as soon as the attester has taken the run
-([`Detached`](#a-pack-that-attests-detached)). This page explains what a pack is, how one is made and
-published, and how your app runs it.
+([`Detached`](#a-pack-that-attests-detached)).
 
 ## What a pack is
 
@@ -24,7 +29,7 @@ A pack is one JSON document per platform, a few kilobytes, that we author and pu
 - **The envelope:** the platform's domains and any third-party sign-in hosts (the WebView is held to
   them: [where the page may go](#where-the-page-may-go)), the addresses the SDK never
   records on (sign-in and account-security pages), and the categories of data the pack collects, which
-  your disclosure and store answers name ([privacy.md](privacy.md)).
+  the sign-in notice and your store answers name ([privacy.md](privacy.md)).
 
 Your app never sees the data. The SDK posts it to the result URL issued for the run, or for a pack that
 attests the attester does ([backend-tree-results.md](backend-tree-results.md)), and `runTree` returns a
@@ -40,64 +45,115 @@ summary.
    step's data defined, and caps on every source. A pack that breaks a rule is refused with a reason,
    before it is published, and again by the SDK on the phone.
 3. **Sign.** A pack that attests names a policy. That policy, with the exact profile the attester
-   reads, goes into the signed policy bundle your app already pins. The attester takes the request, the
-   fields and the claim's lifetime from its own copy of that bundle, never from the phone.
+   reads, goes into the signed policy bundle, which the SDK pins by its signing keys. The attester
+   takes the request, the fields and the claim's lifetime from its own copy of that bundle, never from
+   the phone.
 4. **Check the attested read.** Before a platform's pack ships with an attest block, we run its
    attested read through the attester against a real account: the platform must answer the attester's
    request over HTTP/1.1, and every field must be found in the reply. A platform that does not pass
    ships without an attest block, so its sources are observed only, until it does.
-5. **Sign and publish.** We sign the pack with the operator key your app already pins for the trust
-   bundle, and our API serves it by platform id. The SDK fetches it for each run and runs it only with
-   that signature, so a pack our API serves but we did not sign never reaches the WebView.
+5. **Sign and publish.** We sign the pack with the operator key the SDK pins for the trust bundle,
+   and our API serves it by platform id. The SDK fetches it for each run and runs it only with that
+   signature, so a pack our API serves but we did not sign never reaches the WebView.
 
 ## When a platform changes
 
 A platform that changes its pages or endpoints gets a new pack version, which our API serves once we
-sign it: your app changes nothing, and the next run uses it. Within one launch, the SDK never runs an
+sign it: no app changes, and the next run uses it. Within one launch, the SDK never runs an
 older version of a platform's pack than one it already ran. The version and SHA-256 of the pack a run
 used travel with its result.
 
-## Running a pack
+## Running a pack in the lab
+
+### The lab opt-in
+
+`runTree` and what only it takes or returns (`TreeRunConfig`, `TreeHost`, `TreeWebViewHost`,
+`TreeDisclosure`, `TreeSummary`, `TreeSource`, `SourceEvidence`), and `VerifyEnv`, are behind the lab
+opt-in. Without it, the compiler refuses them.
+
+- **Swift:** import the module with its lab interface, in each file that names them:
+  `@_spi(ZktlsLab) import ZktlsSDK`.
+- **Kotlin:** opt in on the declaration or the file that uses them, `@OptIn(ZktlsLabApi::class)` or
+  `@file:OptIn(ZktlsLabApi::class)`, or mark a declaration of your own `@ZktlsLabApi` to pass the
+  requirement on to its callers.
+
+### Run one pack
 
 ```swift
+@_spi(ZktlsLab) import ZktlsSDK
+
 let client = ZktlsClient()                                   // a client for tree runs
-let host = TreeWebViewHost(presentingFrom: viewController, disclosure: disclosure) // your disclosure text
+let host = TreeWebViewHost(presentingFrom: viewController, disclosure: disclosure) // the lab's notice text
 let summary = try await client.runTree(config: TreeRunConfig(
     baseUrl: frontDoor, appCredential: credential, userIdHash: hash(of: userId),
     idempotencyKey: UUID().uuidString, clientRegion: "GB", networkKey: "wifi",
     platformId: "deel-contractor",                            // the platform the user verifies
     trustBundleJson: trustBundle, trustBundleUrl: trustBundleURL, trustOperatorKey: operatorKey,
-    policyBundleJson: policyBundle, policyBundleDigest: policyBundleDigest,
-    relyingPartyNonceHex: "",                                 // or your backend's 32-byte nonce, hex
+    policyBundleJson: policyBundle, policyBundleKeys: policyBundleKeys,   // the keys, not a digest
+    relyingPartyNonceHex: "",                                 // or a 32-byte nonce, hex
     resultUrl: run.resultUrl, resultToken: run.resultToken,   // issued for this run
     paramsJson: ""),                                          // the check's run inputs, or "" for none
     host: host)
 ```
 
 ```kotlin
-val client = ZktlsClient()                                   // a client for tree runs
-val summary = client.runTree(TreeRunConfig(
-    baseUrl = frontDoor, appCredential = credential, userIdHash = hash(userId),
-    idempotencyKey = UUID.randomUUID().toString(), clientRegion = "GB", networkKey = "wifi",
-    platformId = "deel-contractor",
-    trustBundleJson = trustBundle, trustBundleUrl = trustBundleUrl, trustOperatorKey = operatorKey,
-    policyBundleJson = policyBundle, policyBundleDigest = policyBundleDigest,
-    relyingPartyNonceHex = "", resultUrl = run.resultUrl, resultToken = run.resultToken,
-    paramsJson = "",
-), TreeWebViewHost(activity, disclosure))
+@OptIn(ZktlsLabApi::class)
+suspend fun runPack(activity: Activity, disclosure: TreeDisclosure, run: IssuedRun): TreeSummary {
+    val client = ZktlsClient()                               // a client for tree runs
+    return client.runTree(TreeRunConfig(
+        baseUrl = frontDoor, appCredential = credential, userIdHash = hash(userId),
+        idempotencyKey = UUID.randomUUID().toString(), clientRegion = "GB", networkKey = "wifi",
+        platformId = "deel-contractor",
+        trustBundleJson = trustBundle, trustBundleUrl = trustBundleUrl, trustOperatorKey = operatorKey,
+        policyBundleJson = policyBundle, policyBundleKeys = policyBundleKeys,   // the keys, not a digest
+        relyingPartyNonceHex = "", resultUrl = run.resultUrl, resultToken = run.resultToken,
+        paramsJson = "",
+    ), TreeWebViewHost(activity, disclosure))
+}
 ```
 
-`paramsJson` carries the run's inputs when the check takes any: a JSON object as text, as your backend received it
+`IssuedRun`, `frontDoor`, `credential` and the bundles are yours: the lab's own server, or our backend,
+issues the run's result URL and token.
+
+`policyBundleKeys` are the keys the policy bundle must be signed with: Ed25519 public keys, 64 lowercase
+hex characters each, the attester's own policy keys (`verify` uses the ones the SDK compiles in). The SDK
+refuses a bundle signed with any other key, and one older than a version it has accepted under the same
+key while the app runs, with `Policy("policy bundle: not signed with one of policy_bundle_keys")` or
+`Policy("policy bundle: version N is older than version M already seen")`. There is no digest to pin, so
+a new version of the bundle needs no new build. They are read only for a pack that attests: an observed
+pack takes an empty list. (Proof mode's `SessionConfig` still pins its policy bundle by digest.)
+
+`paramsJson` carries the run's inputs when the check takes any: a JSON object as text, as the backend received it
 when it created the run (at most 16 KiB). Pass `""` for a check without inputs. The SDK refuses anything else before
 the WebView opens.
 
 `trustOperatorKey` is read on every run: it checks the pack's signature. The trust and policy bundles,
 and `trustBundleUrl`, are read only for a pack that attests. Everything is checked before the WebView opens: a platform we
 publish no pack for, a pack we did not sign, a pack the SDK's rules refuse, and an attested pack whose
-profile is not the one your pinned policy bundle holds are refused with `Policy`, and the user sees
+profile is not the one the pinned policy bundle holds are refused with `Policy`, and the user sees
 nothing.
 
-`TreeSummary` tells you how the run ended:
+### The lab's sign-in notice
+
+`TreeWebViewHost` shows the `TreeDisclosure` you pass, as given, before the platform's page opens: pass
+the text your review approved. (`verify` shows its own notice, from its `disclosure.*` strings, naming
+the site the page signs in to, the pack's `provider.name` or, when it has none, the platform's name, and
+the data its pack reads.) Declining it ends the run with `Cancelled`, as closing the page
+does, and nothing is posted to the result URL; before 2.0.0, a decline failed the run and posted a failed
+result. A `TreeHost` of your own reports a decline by failing `begin` with exactly "the user declined",
+and, once the user has closed the page, fails every call but `finish` with exactly "the page closed".
+
+### `verify` against another environment
+
+`Zktls.configure(appKey:environment:)` (Kotlin `Zktls.configure(appKey, environment)`), behind the same
+opt-in, makes `verify` run against a `VerifyEnv` in place of production: `backendUrl`, `trustBundleUrl`
+and `policyBundleUrl`, each `https://`; `operatorKey`, PEM; and `policyKeys`, as `policyBundleKeys`. The
+screens keep the SDK's own look and words. An environment the SDK cannot use is refused with
+`Policy("verify env: …")` before anything is sent ([errors.md](errors.md#policy)).
+
+### How the run ended
+
+`TreeSummary` says how the run ended:
 
 | Field | Meaning |
 |---|---|
@@ -139,14 +195,15 @@ with `handedOff` true. There is no `Done` for such a run:
 - **Until `Detached`, the run needs the app.** The upload takes seconds, at most 120 s, after which it
   fails with `Transport`. If the user may leave during it, hold background time as for a capture: begin
   `ZkTlsLifecycle` (and on Android `ZkTlsSessionService`) when `onProgress` reports `Attesting`, and end
-  it when `runTree` returns. Before the acceptance, a busy attester
+  it when `runTree` returns (`verify` does this itself). Before the acceptance, a busy attester
   (`Transport("attester error: attester busy")`) or a dropped connection, which a new run may get past,
   and a refusal (`Policy("attester refused the upload: …")`), which a new run would meet again, throw,
   never report `Detached`, and hand nothing off: the user starts a new run, signing in again.
 
 ## Where the page may go
 
-A pack names two sets of hosts, and the SDK decides every page load and popup in its WebView against
+This holds for every platform `verify` runs too; there, a refusal fails that platform with the reason
+`navigation_refused`. A pack names two sets of hosts, and the SDK decides every page load and popup in its WebView against
 them before it starts:
 
 - **The platform's domains**, its own hosts. A plain entry is that host exactly; an entry with a
@@ -192,7 +249,7 @@ host is a report to us, with the host: the pack may need it as a sign-in host.
 | `profile` | Android, Android System WebView 123 and later | The run had a WebView profile of its own |
 | `shared` | Android, older WebViews | The run used your app's WebView store, wiped before and after |
 | `ephemeral` | iOS | The run had a new non-persistent data store |
-| empty | Both | The run never had a page: the user declined, the run failed before the page opened, or the page opened and its first load failed |
+| empty | Both | The run never had a page: it failed before the page opened, or the page opened and its first load failed. A declined sign-in notice returns no summary: `runTree` throws `Cancelled` |
 
 It reaches your app only: the result posted to the result URL does not carry it. What the user sees
 around the page, the host bar and the capture protection, is in

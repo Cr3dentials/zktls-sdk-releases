@@ -25,8 +25,17 @@ adb push session.json /sdcard/Android/data/ai.zktls.sample/files/session.json
 
 ## Settings
 
-The app reads one JSON object: the `SessionConfig` fields in snake case
-(`base_url`, `app_credential`, `user_id_hash`, `profile_id`, `policy_id`, `client_region`,
+**Verify.** *Verify with zktls-demo* is a partner's whole integration: `Zktls.configure` with your app's
+key, then `Zktls.verify` on the demo platform `zktls-demo`, with the SDK's own screens. The key is in
+`verify.json`, `{"app_key": "zk_test_…"}`, read at launch. A test key runs on an emulator; a live key needs
+a build installed from Google Play, on a device with Google Play services.
+
+```bash
+adb push verify.json /sdcard/Android/data/ai.zktls.sample/files/verify.json
+```
+
+**The proof flow.** *Prove my transfer* reads `session.json`, one JSON object: the `SessionConfig` fields in
+snake case (`base_url`, `app_credential`, `user_id_hash`, `profile_id`, `policy_id`, `client_region`,
 `network_key`, `trust_bundle_json`, `trust_bundle_url` (optional: where the SDK refetches the trust bundle
 once if an enclave's key is newer than `trust_bundle_json`), `trust_operator_key` (the operator's public key,
 PEM), `policy_bundle_json`, `policy_bundle_digest`).
@@ -35,9 +44,10 @@ PEM), `policy_bundle_json`, `policy_bundle_digest`).
 settings are a second file, `tree.json`, beside `session.json`: `base_url`, `app_credential`,
 `trust_operator_key` (the operator's public key the packs are signed with, PEM), `runs_url`, and
 `platforms` (the platform ids to offer), with `user_id_hash`, `client_region`, `network_key` and
-`trust_bundle_url` optional. `runs_url` is your backend's endpoint for a run: it answers `POST {"platform_id": ...}`
-with the `result_url` and `result_token` our backend issued for it, and a check's `params` if it
-takes any.
+`trust_bundle_url` optional, and, for a pack that attests, `trust_bundle_json`, `policy_bundle_json` and
+`policy_bundle_keys` (an array of keys, 64 lowercase hex characters each). `runs_url` is your backend's
+endpoint for a run: it answers `POST {"platform_id": ...}` with the `result_url` and `result_token` our
+backend issued for it, and a check's `params` if it takes any.
 
 ```bash
 adb push tree.json /sdcard/Android/data/ai.zktls.sample/files/tree.json

@@ -548,7 +548,8 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 /**
  * Where a run's WebView may go, and where the bridge and the pack's script may run: the pack's domains,
- * and its sign-in domains for navigation only.
+ * and its sign-in domains for navigation only. It also carries what the sign-in notice before the page
+ * names: the site the page signs in to and the data the pack reads.
  */
 public protocol ConfinementPolicyProtocol : AnyObject {
     
@@ -556,6 +557,13 @@ public protocol ConfinementPolicyProtocol : AnyObject {
      * The domains the bridge runs on: the pack's `provider.domain`, then its allowlist.
      */
     func bridgeDomains()  -> [String]
+    
+    /**
+     * The categories of data the pack reads (its `data_categories`), in its order, which the sign-in
+     * notice names before the page opens. Empty when the pack declares none, and for a policy the test
+     * hook made.
+     */
+    func dataCategories()  -> [String]
     
     /**
      * Whether `action` on `url` in `frame` is allowed.
@@ -567,11 +575,26 @@ public protocol ConfinementPolicyProtocol : AnyObject {
      */
     func displayHost(url: String)  -> String
     
+    /**
+     * The platform's name as the user knows it: our backend's name for it in `verify` (the check's
+     * name, which the flow's own screens show), the pack's own name in the lab's `run_tree`. Empty for a
+     * policy the test hook made.
+     */
+    func packName()  -> String
+    
+    /**
+     * The site's name, which the sign-in notice says the page signs in to: the signed pack's
+     * `provider.name` ("zkTLS Demo Bank"), or `pack_name` when the pack gives none. Empty for a policy
+     * the test hook made.
+     */
+    func providerName()  -> String
+    
 }
 
 /**
  * Where a run's WebView may go, and where the bridge and the pack's script may run: the pack's domains,
- * and its sign-in domains for navigation only.
+ * and its sign-in domains for navigation only. It also carries what the sign-in notice before the page
+ * names: the site the page signs in to and the data the pack reads.
  */
 open class ConfinementPolicy:
     ConfinementPolicyProtocol {
@@ -634,6 +657,18 @@ open func bridgeDomains() -> [String] {
 }
     
     /**
+     * The categories of data the pack reads (its `data_categories`), in its order, which the sign-in
+     * notice names before the page opens. Empty when the pack declares none, and for a policy the test
+     * hook made.
+     */
+open func dataCategories() -> [String] {
+    return try!  FfiConverterSequenceString.lift(try! rustCall() {
+    uniffi_zktls_sdk_fn_method_confinementpolicy_data_categories(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
      * Whether `action` on `url` in `frame` is allowed.
      */
 open func decide(url: String, frame: ConfinementFrame, action: ConfinementAction) -> ConfinementDecision {
@@ -653,6 +688,30 @@ open func displayHost(url: String) -> String {
     return try!  FfiConverterString.lift(try! rustCall() {
     uniffi_zktls_sdk_fn_method_confinementpolicy_display_host(self.uniffiClonePointer(),
         FfiConverterString.lower(url),$0
+    )
+})
+}
+    
+    /**
+     * The platform's name as the user knows it: our backend's name for it in `verify` (the check's
+     * name, which the flow's own screens show), the pack's own name in the lab's `run_tree`. Empty for a
+     * policy the test hook made.
+     */
+open func packName() -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_zktls_sdk_fn_method_confinementpolicy_pack_name(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * The site's name, which the sign-in notice says the page signs in to: the signed pack's
+     * `provider.name` ("zkTLS Demo Bank"), or `pack_name` when the pack gives none. Empty for a policy
+     * the test hook made.
+     */
+open func providerName() -> String {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_zktls_sdk_fn_method_confinementpolicy_provider_name(self.uniffiClonePointer(),$0
     )
 })
 }
@@ -1325,19 +1384,21 @@ public protocol PlatformHttp : AnyObject {
     func headMs(url: String) async  -> UInt32
     
     /**
-     * POSTs `body` to `url` with exactly `headers` and returns the reply; status 0 means unreachable.
-     * `run_tree` sends its result through it, with `Content-Type`, `Content-Encoding` and
-     * `Authorization` only.
+     * POSTs `body` to `url` with exactly `headers` and returns the reply, its body too, an error's
+     * included; status 0 means unreachable. `run_tree` sends its result through it, with
+     * `Content-Type`, `Content-Encoding` and `Authorization` only, and `verify` its calls to our
+     * backend, with `Content-Type`, `Accept`, `Authorization` and `X-Zktls-Attestation` only.
      */
     func postBytes(url: String, headers: [PlatformHeader], body: Data) async  -> PlatformResponse
     
     /**
-     * GETs `url` with exactly `headers` and returns the reply; status 0 means unreachable.
-     * `run_tree` fetches the platform's signed pack through it, with `Accept` and `Authorization`
-     * only, and a run refetches the trust bundle (`trust_bundle_url`) with `Accept` only. Reads at
-     * most `max_bytes` of the body, counted as decoded: a declared length over it, or a body that
-     * grows past it, abandons the request, which answers status 413 with no body. Uses no cache and
-     * no cookie, and follows no redirect to a URL that is not https.
+     * GETs `url` with exactly `headers` and returns the reply, an error's body included; status 0
+     * means unreachable. `run_tree` fetches the platform's signed pack through it, with `Accept` and
+     * `Authorization` only, and a run refetches the trust bundle (`trust_bundle_url`) with `Accept`
+     * only; `verify` GETs our backend's attest challenge and the trust and policy bundles, with
+     * `Accept` only. Reads at most `max_bytes` of the body, counted as decoded: a declared length
+     * over it, or a body that grows past it, abandons the request, which answers status 413 with no
+     * body. Uses no cache and no cookie, and follows no redirect to a URL that is not https.
      */
     func getBytes(url: String, headers: [PlatformHeader], maxBytes: UInt64) async  -> PlatformResponse
     
@@ -1440,9 +1501,10 @@ open func headMs(url: String)async  -> UInt32 {
 }
     
     /**
-     * POSTs `body` to `url` with exactly `headers` and returns the reply; status 0 means unreachable.
-     * `run_tree` sends its result through it, with `Content-Type`, `Content-Encoding` and
-     * `Authorization` only.
+     * POSTs `body` to `url` with exactly `headers` and returns the reply, its body too, an error's
+     * included; status 0 means unreachable. `run_tree` sends its result through it, with
+     * `Content-Type`, `Content-Encoding` and `Authorization` only, and `verify` its calls to our
+     * backend, with `Content-Type`, `Accept`, `Authorization` and `X-Zktls-Attestation` only.
      */
 open func postBytes(url: String, headers: [PlatformHeader], body: Data)async  -> PlatformResponse {
     return
@@ -1463,12 +1525,13 @@ open func postBytes(url: String, headers: [PlatformHeader], body: Data)async  ->
 }
     
     /**
-     * GETs `url` with exactly `headers` and returns the reply; status 0 means unreachable.
-     * `run_tree` fetches the platform's signed pack through it, with `Accept` and `Authorization`
-     * only, and a run refetches the trust bundle (`trust_bundle_url`) with `Accept` only. Reads at
-     * most `max_bytes` of the body, counted as decoded: a declared length over it, or a body that
-     * grows past it, abandons the request, which answers status 413 with no body. Uses no cache and
-     * no cookie, and follows no redirect to a URL that is not https.
+     * GETs `url` with exactly `headers` and returns the reply, an error's body included; status 0
+     * means unreachable. `run_tree` fetches the platform's signed pack through it, with `Accept` and
+     * `Authorization` only, and a run refetches the trust bundle (`trust_bundle_url`) with `Accept`
+     * only; `verify` GETs our backend's attest challenge and the trust and policy bundles, with
+     * `Accept` only. Reads at most `max_bytes` of the body, counted as decoded: a declared length
+     * over it, or a body that grows past it, abandons the request, which answers status 413 with no
+     * body. Uses no cache and no cookie, and follows no redirect to a URL that is not https.
      */
 open func getBytes(url: String, headers: [PlatformHeader], maxBytes: UInt64)async  -> PlatformResponse {
     return
@@ -2251,9 +2314,11 @@ public func FfiConverterTypeSessionMaterialHandle_lower(_ value: SessionMaterial
  * What the host app provides for `run_tree`: it owns the WebView, because only the platform has one.
  * The SDK ships an implementation for each platform (`TreeWebViewHost`); an app implements it only
  * to embed the view in its own UI. Once the user closes the page (a Close button, Back, a swipe down),
- * every call but `finish` fails with exactly "the page closed", which ends the run as `Cancelled`.
+ * every call but `finish` fails with exactly "the page closed"; a `begin` whose sign-in notice the user
+ * declined fails with exactly "the user declined". Either ends the run as `Cancelled`, and nothing is
+ * posted.
  */
-public protocol TreeHost : AnyObject {
+@_spi(ZktlsLab) public protocol TreeHost : AnyObject {
     
     /**
      * Presents the WebView on `login_url` with the bridge injected at every document start, telling
@@ -2356,9 +2421,11 @@ public protocol TreeHost : AnyObject {
  * What the host app provides for `run_tree`: it owns the WebView, because only the platform has one.
  * The SDK ships an implementation for each platform (`TreeWebViewHost`); an app implements it only
  * to embed the view in its own UI. Once the user closes the page (a Close button, Back, a swipe down),
- * every call but `finish` fails with exactly "the page closed", which ends the run as `Cancelled`.
+ * every call but `finish` fails with exactly "the page closed"; a `begin` whose sign-in notice the user
+ * declined fails with exactly "the user declined". Either ends the run as `Cancelled`, and nothing is
+ * posted.
  */
-open class TreeHostImpl:
+@_spi(ZktlsLab) open class TreeHostImpl:
     TreeHost {
     fileprivate let pointer: UnsafeMutableRawPointer!
 
@@ -3503,7 +3570,7 @@ private func uniffiCallbackInitTreeHost() {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeTreeHost: FfiConverter {
+@_spi(ZktlsLab) public struct FfiConverterTypeTreeHost: FfiConverter {
     fileprivate static var handleMap = UniffiHandleMap<TreeHost>()
 
     typealias FfiType = UnsafeMutableRawPointer
@@ -3544,15 +3611,926 @@ public struct FfiConverterTypeTreeHost: FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeHost_lift(_ pointer: UnsafeMutableRawPointer) throws -> TreeHost {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeHost_lift(_ pointer: UnsafeMutableRawPointer) throws -> TreeHost {
     return try FfiConverterTypeTreeHost.lift(pointer)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeHost_lower(_ value: TreeHost) -> UnsafeMutableRawPointer {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeHost_lower(_ value: TreeHost) -> UnsafeMutableRawPointer {
     return FfiConverterTypeTreeHost.lower(value)
+}
+
+
+
+
+/**
+ * What `verify` needs from the platform: the device's attestation, the screens, background time and
+ * the WebView. The SDK's own Swift and Kotlin layers implement it; an app does not.
+ */
+internal protocol VerifyHost : AnyObject {
+    
+    /**
+     * The install's id, sent with every start: on iOS the App Attest key's id (the key is made on
+     * first use, and again by `register_key` when it must be), on Android a random id kept for the
+     * install. A live key on a device that cannot attest answers `Refused` with `device_not_verified`;
+     * a test key's never refuses (an iOS device without App Attest answers a random id it keeps).
+     */
+    func installId() async throws  -> String
+    
+    /**
+     * Whether the install's App Attest key still has to be registered (iOS); always false on Android.
+     * Asked for a live key only.
+     */
+    func needsRegistration()  -> Bool
+    
+    /**
+     * Attests the install's App Attest key over `challenge_sha256`, SHA-256 of our backend's 32-byte
+     * challenge, and answers the attestation object in base64. Apple attests a key once: when the
+     * current key cannot be attested (again), make a new key and attest that one; `install_id` then
+     * answers the new key's id. On Android, which registers nothing, `install_id` stays the same.
+     * `Refused` with `device_not_verified` when the device cannot attest.
+     */
+    func registerKey(challengeSha256: Data) async throws  -> String
+    
+    /**
+     * Our backend registered the key: `needs_registration` answers false from now on.
+     */
+    func registered() 
+    
+    /**
+     * The `X-Zktls-Attestation` value for a start whose body is `body`, exactly these bytes: on iOS
+     * `ios.` and an App Attest assertion whose client data is `body`, on Android `android.` and a Play
+     * Integrity token whose request hash is the lowercase hex SHA-256 of `body`. Called again for each
+     * start, so each assertion's counter advances. `Refused` with `device_not_verified` when the
+     * device cannot attest, and with `attest_key_unknown` when the device no longer has the install's
+     * key (a backup restored without it): the flow then registers a key once and starts again, as when
+     * our backend answers that code.
+     */
+    func sign(body: Data) async throws  -> String
+    
+    /**
+     * The intro screen, naming the platforms in order: true to start, false to stop before any.
+     */
+    func showIntro(names: [String]) async  -> Bool
+    
+    /**
+     * Between platforms, after `finished` was done: true to go on to `next`, false to stop here.
+     */
+    func showNext(finished: String, next: String) async  -> Bool
+    
+    /**
+     * `name` could not be verified; the user continues to the next platform, or to the finish.
+     */
+    func showFailed(name: String) async 
+    
+    /**
+     * The finish screen, with how each platform ended. Not called when no platform ran to an end (the
+     * intro declined, or the first page closed or its notice declined).
+     */
+    func showFinish(outcome: VerifyOutcome) async 
+    
+    /**
+     * The verification did not start. `code` is a refusal's (`device_not_verified` reads "this device
+     * can't be verified"; any other, that verification isn't available right now), or `unavailable`
+     * when the start could not be made at all (our backend unreachable, or its answer unreadable),
+     * which reads as any code but `device_not_verified` does. `message` is for logs, empty for
+     * `unavailable`.
+     */
+    func showRefusal(code: String, message: String) async 
+    
+    /**
+     * The WebView host a platform's run uses, as `run_tree` takes it.
+     */
+    func treeHost()  -> TreeHost
+    
+    /**
+     * Hold background time, so leaving the app cuts nothing off: a run is handing its read to the
+     * attester, or the flow is telling our backend how the runs ended. Ended by `end_background`. When
+     * the flow goes straight from a run to the end call, the run's time is kept for it, not ended and
+     * begun again; when no platform ran to an end, the end call takes none.
+     */
+    func beginBackground() 
+    
+    /**
+     * The upload returned and a screen follows, or the end call returned, however each ended: release
+     * the background time `begin_background` took.
+     */
+    func endBackground() 
+    
+}
+
+/**
+ * What `verify` needs from the platform: the device's attestation, the screens, background time and
+ * the WebView. The SDK's own Swift and Kotlin layers implement it; an app does not.
+ */
+internal class VerifyHostImpl:
+    VerifyHost {
+    fileprivate let pointer: UnsafeMutableRawPointer!
+
+    /// Used to instantiate a [FFIObject] without an actual pointer, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoPointer {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+    required public init(unsafeFromRawPointer pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noPointer: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing [Pointer] the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noPointer: NoPointer) {
+        self.pointer = nil
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiClonePointer() -> UnsafeMutableRawPointer {
+        return try! rustCall { uniffi_zktls_sdk_fn_clone_verifyhost(self.pointer, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        guard let pointer = pointer else {
+            return
+        }
+
+        try! rustCall { uniffi_zktls_sdk_fn_free_verifyhost(pointer, $0) }
+    }
+
+    
+
+    
+    /**
+     * The install's id, sent with every start: on iOS the App Attest key's id (the key is made on
+     * first use, and again by `register_key` when it must be), on Android a random id kept for the
+     * install. A live key on a device that cannot attest answers `Refused` with `device_not_verified`;
+     * a test key's never refuses (an iOS device without App Attest answers a random id it keeps).
+     */
+open func installId()async throws  -> String {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_install_id(
+                    self.uniffiClonePointer()
+                    
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_zktls_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeSdkError.lift
+        )
+}
+    
+    /**
+     * Whether the install's App Attest key still has to be registered (iOS); always false on Android.
+     * Asked for a live key only.
+     */
+open func needsRegistration() -> Bool {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+    uniffi_zktls_sdk_fn_method_verifyhost_needs_registration(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Attests the install's App Attest key over `challenge_sha256`, SHA-256 of our backend's 32-byte
+     * challenge, and answers the attestation object in base64. Apple attests a key once: when the
+     * current key cannot be attested (again), make a new key and attest that one; `install_id` then
+     * answers the new key's id. On Android, which registers nothing, `install_id` stays the same.
+     * `Refused` with `device_not_verified` when the device cannot attest.
+     */
+open func registerKey(challengeSha256: Data)async throws  -> String {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_register_key(
+                    self.uniffiClonePointer(),
+                    FfiConverterData.lower(challengeSha256)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_zktls_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeSdkError.lift
+        )
+}
+    
+    /**
+     * Our backend registered the key: `needs_registration` answers false from now on.
+     */
+open func registered() {try! rustCall() {
+    uniffi_zktls_sdk_fn_method_verifyhost_registered(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * The `X-Zktls-Attestation` value for a start whose body is `body`, exactly these bytes: on iOS
+     * `ios.` and an App Attest assertion whose client data is `body`, on Android `android.` and a Play
+     * Integrity token whose request hash is the lowercase hex SHA-256 of `body`. Called again for each
+     * start, so each assertion's counter advances. `Refused` with `device_not_verified` when the
+     * device cannot attest, and with `attest_key_unknown` when the device no longer has the install's
+     * key (a backup restored without it): the flow then registers a key once and starts again, as when
+     * our backend answers that code.
+     */
+open func sign(body: Data)async throws  -> String {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_sign(
+                    self.uniffiClonePointer(),
+                    FfiConverterData.lower(body)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_zktls_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeSdkError.lift
+        )
+}
+    
+    /**
+     * The intro screen, naming the platforms in order: true to start, false to stop before any.
+     */
+open func showIntro(names: [String])async  -> Bool {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_show_intro(
+                    self.uniffiClonePointer(),
+                    FfiConverterSequenceString.lower(names)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_i8,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_i8,
+            freeFunc: ffi_zktls_sdk_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * Between platforms, after `finished` was done: true to go on to `next`, false to stop here.
+     */
+open func showNext(finished: String, next: String)async  -> Bool {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_show_next(
+                    self.uniffiClonePointer(),
+                    FfiConverterString.lower(finished),FfiConverterString.lower(next)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_i8,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_i8,
+            freeFunc: ffi_zktls_sdk_rust_future_free_i8,
+            liftFunc: FfiConverterBool.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * `name` could not be verified; the user continues to the next platform, or to the finish.
+     */
+open func showFailed(name: String)async  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_show_failed(
+                    self.uniffiClonePointer(),
+                    FfiConverterString.lower(name)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_void,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_void,
+            freeFunc: ffi_zktls_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * The finish screen, with how each platform ended. Not called when no platform ran to an end (the
+     * intro declined, or the first page closed or its notice declined).
+     */
+open func showFinish(outcome: VerifyOutcome)async  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_show_finish(
+                    self.uniffiClonePointer(),
+                    FfiConverterTypeVerifyOutcome.lower(outcome)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_void,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_void,
+            freeFunc: ffi_zktls_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * The verification did not start. `code` is a refusal's (`device_not_verified` reads "this device
+     * can't be verified"; any other, that verification isn't available right now), or `unavailable`
+     * when the start could not be made at all (our backend unreachable, or its answer unreadable),
+     * which reads as any code but `device_not_verified` does. `message` is for logs, empty for
+     * `unavailable`.
+     */
+open func showRefusal(code: String, message: String)async  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_show_refusal(
+                    self.uniffiClonePointer(),
+                    FfiConverterString.lower(code),FfiConverterString.lower(message)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_void,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_void,
+            freeFunc: ffi_zktls_sdk_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * The WebView host a platform's run uses, as `run_tree` takes it.
+     */
+open func treeHost() -> TreeHost {
+    return try!  FfiConverterTypeTreeHost.lift(try! rustCall() {
+    uniffi_zktls_sdk_fn_method_verifyhost_tree_host(self.uniffiClonePointer(),$0
+    )
+})
+}
+    
+    /**
+     * Hold background time, so leaving the app cuts nothing off: a run is handing its read to the
+     * attester, or the flow is telling our backend how the runs ended. Ended by `end_background`. When
+     * the flow goes straight from a run to the end call, the run's time is kept for it, not ended and
+     * begun again; when no platform ran to an end, the end call takes none.
+     */
+open func beginBackground() {try! rustCall() {
+    uniffi_zktls_sdk_fn_method_verifyhost_begin_background(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+    /**
+     * The upload returned and a screen follows, or the end call returned, however each ended: release
+     * the background time `begin_background` took.
+     */
+open func endBackground() {try! rustCall() {
+    uniffi_zktls_sdk_fn_method_verifyhost_end_background(self.uniffiClonePointer(),$0
+    )
+}
+}
+    
+
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceVerifyHost {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    static var vtable: UniffiVTableCallbackInterfaceVerifyHost = UniffiVTableCallbackInterfaceVerifyHost(
+        installId: { (
+            uniffiHandle: UInt64,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> String in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.installId(
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: String) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: FfiConverterString.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: RustBuffer.empty(),
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeSdkError.lower
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        needsRegistration: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<Int8>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Bool in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.needsRegistration(
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterBool.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        registerKey: { (
+            uniffiHandle: UInt64,
+            challengeSha256: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> String in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.registerKey(
+                     challengeSha256: try FfiConverterData.lift(challengeSha256)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: String) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: FfiConverterString.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: RustBuffer.empty(),
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeSdkError.lower
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        registered: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.registered(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        sign: { (
+            uniffiHandle: UInt64,
+            body: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> String in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return try await uniffiObj.sign(
+                     body: try FfiConverterData.lift(body)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: String) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: FfiConverterString.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: RustBuffer.empty(),
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError,
+                lowerError: FfiConverterTypeSdkError.lower
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        showIntro: { (
+            uniffiHandle: UInt64,
+            names: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteI8,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> Bool in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return await uniffiObj.showIntro(
+                     names: try FfiConverterSequenceString.lift(names)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: Bool) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructI8(
+                        returnValue: FfiConverterBool.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructI8(
+                        returnValue: 0,
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsync(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        showNext: { (
+            uniffiHandle: UInt64,
+            finished: RustBuffer,
+            next: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteI8,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> Bool in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return await uniffiObj.showNext(
+                     finished: try FfiConverterString.lift(finished),
+                     next: try FfiConverterString.lift(next)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: Bool) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructI8(
+                        returnValue: FfiConverterBool.lower(returnValue),
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructI8(
+                        returnValue: 0,
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsync(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        showFailed: { (
+            uniffiHandle: UInt64,
+            name: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return await uniffiObj.showFailed(
+                     name: try FfiConverterString.lift(name)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: ()) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructVoid(
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructVoid(
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsync(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        showFinish: { (
+            uniffiHandle: UInt64,
+            outcome: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return await uniffiObj.showFinish(
+                     outcome: try FfiConverterTypeVerifyOutcome.lift(outcome)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: ()) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructVoid(
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructVoid(
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsync(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        showRefusal: { (
+            uniffiHandle: UInt64,
+            code: RustBuffer,
+            message: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
+            uniffiCallbackData: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
+        ) in
+            let makeCall = {
+                () async throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return await uniffiObj.showRefusal(
+                     code: try FfiConverterString.lift(code),
+                     message: try FfiConverterString.lift(message)
+                )
+            }
+
+            let uniffiHandleSuccess = { (returnValue: ()) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructVoid(
+                        callStatus: RustCallStatus()
+                    )
+                )
+            }
+            let uniffiHandleError = { (statusCode, errorBuf) in
+                uniffiFutureCallback(
+                    uniffiCallbackData,
+                    UniffiForeignFutureStructVoid(
+                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
+                    )
+                )
+            }
+            let uniffiForeignFuture = uniffiTraitInterfaceCallAsync(
+                makeCall: makeCall,
+                handleSuccess: uniffiHandleSuccess,
+                handleError: uniffiHandleError
+            )
+            uniffiOutReturn.pointee = uniffiForeignFuture
+        },
+        treeHost: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<UnsafeMutableRawPointer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> TreeHost in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.treeHost(
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterTypeTreeHost.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        beginBackground: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.beginBackground(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        endBackground: { (
+            uniffiHandle: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.endBackground(
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            let result = try? FfiConverterTypeVerifyHost.handleMap.remove(handle: uniffiHandle)
+            if result == nil {
+                print("Uniffi callback interface VerifyHost: handle missing in uniffiFree")
+            }
+        }
+    )
+}
+
+private func uniffiCallbackInitVerifyHost() {
+    uniffi_zktls_sdk_fn_init_callback_vtable_verifyhost(&UniffiCallbackInterfaceVerifyHost.vtable)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal struct FfiConverterTypeVerifyHost: FfiConverter {
+    fileprivate static var handleMap = UniffiHandleMap<VerifyHost>()
+
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = VerifyHost
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> VerifyHost {
+        return VerifyHostImpl(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: VerifyHost) -> UnsafeMutableRawPointer {
+        guard let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: handleMap.insert(obj: value))) else {
+            fatalError("Cast to UnsafeMutableRawPointer failed")
+        }
+        return ptr
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VerifyHost {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: VerifyHost, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+}
+
+
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypeVerifyHost_lift(_ pointer: UnsafeMutableRawPointer) throws -> VerifyHost {
+    return try FfiConverterTypeVerifyHost.lift(pointer)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypeVerifyHost_lower(_ value: VerifyHost) -> UnsafeMutableRawPointer {
+    return FfiConverterTypeVerifyHost.lower(value)
 }
 
 
@@ -4090,6 +5068,117 @@ public func FfiConverterTypePlatformHeader_lift(_ buf: RustBuffer) throws -> Pla
 #endif
 public func FfiConverterTypePlatformHeader_lower(_ value: PlatformHeader) -> RustBuffer {
     return FfiConverterTypePlatformHeader.lower(value)
+}
+
+
+/**
+ * One platform of a verification, as it ended on the phone.
+ */
+public struct PlatformOutcome {
+    /**
+     * The platform id.
+     */
+    public var platform: String
+    /**
+     * How it ended.
+     */
+    public var status: PlatformStatus
+    /**
+     * Why a failed run failed, one of a fixed set, which the end call reports to our backend and our
+     * backend passes to the partner's server as the run's error code: `platform_failed` (the
+     * platform's own steps failed, for example the sign-in did not finish), `upload_refused` (the
+     * attester refused the run's read), `bundles_unavailable` (the trust or policy bundle could not be
+     * fetched, or did not verify), `delivery_failed` (a result the phone posts did not arrive),
+     * `network` (the connection broke off), `navigation_refused` (the page went where the platform's
+     * pack does not allow), `not_logged_in` (the sign-in left nothing to read with), `configuration`
+     * (the SDK refused the platform's pack, policy or settings) or `internal`. `None` unless the
+     * status is `Failed`.
+     */
+    public var reason: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The platform id.
+         */platform: String, 
+        /**
+         * How it ended.
+         */status: PlatformStatus, 
+        /**
+         * Why a failed run failed, one of a fixed set, which the end call reports to our backend and our
+         * backend passes to the partner's server as the run's error code: `platform_failed` (the
+         * platform's own steps failed, for example the sign-in did not finish), `upload_refused` (the
+         * attester refused the run's read), `bundles_unavailable` (the trust or policy bundle could not be
+         * fetched, or did not verify), `delivery_failed` (a result the phone posts did not arrive),
+         * `network` (the connection broke off), `navigation_refused` (the page went where the platform's
+         * pack does not allow), `not_logged_in` (the sign-in left nothing to read with), `configuration`
+         * (the SDK refused the platform's pack, policy or settings) or `internal`. `None` unless the
+         * status is `Failed`.
+         */reason: String?) {
+        self.platform = platform
+        self.status = status
+        self.reason = reason
+    }
+}
+
+
+
+extension PlatformOutcome: Equatable, Hashable {
+    public static func ==(lhs: PlatformOutcome, rhs: PlatformOutcome) -> Bool {
+        if lhs.platform != rhs.platform {
+            return false
+        }
+        if lhs.status != rhs.status {
+            return false
+        }
+        if lhs.reason != rhs.reason {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(platform)
+        hasher.combine(status)
+        hasher.combine(reason)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlatformOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlatformOutcome {
+        return
+            try PlatformOutcome(
+                platform: FfiConverterString.read(from: &buf), 
+                status: FfiConverterTypePlatformStatus.read(from: &buf), 
+                reason: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlatformOutcome, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.platform, into: &buf)
+        FfiConverterTypePlatformStatus.write(value.status, into: &buf)
+        FfiConverterOptionString.write(value.reason, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlatformOutcome_lift(_ buf: RustBuffer) throws -> PlatformOutcome {
+    return try FfiConverterTypePlatformOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlatformOutcome_lower(_ value: PlatformOutcome) -> RustBuffer {
+    return FfiConverterTypePlatformOutcome.lower(value)
 }
 
 
@@ -5016,7 +6105,7 @@ public func FfiConverterTypeTreeHeader_lower(_ value: TreeHeader) -> RustBuffer 
  * One tree run's configuration: the front door, your app's credential, the platform whose pack runs,
  * and, for a pack that attests, the pinned trust and policy bundles. Build one per run.
  */
-public struct TreeRunConfig {
+@_spi(ZktlsLab) public struct TreeRunConfig {
     /**
      * The front door, `https://` only; the SDK refuses anything else. The SDK fetches the platform's
      * pack from it.
@@ -5068,9 +6157,11 @@ public struct TreeRunConfig {
      */
     public var policyBundleJson: String
     /**
-     * The digest that pins the policy bundle. Read only for a pack that attests.
+     * The keys the policy bundle must be signed with: Ed25519 public keys, 64 lowercase hex characters
+     * each. The SDK also refuses a bundle older than one it has accepted under the same key while the
+     * app runs. Read only for a pack that attests.
      */
-    public var policyBundleDigest: String
+    public var policyBundleKeys: [String]
     /**
      * Your backend's nonce for this run, 64 hex characters, which the attested read's receipt signs;
      * empty for a fresh random one.
@@ -5137,8 +6228,10 @@ public struct TreeRunConfig {
          * The signed policy bundle, as `SessionConfig.policyBundleJson`. Read only for a pack that attests.
          */policyBundleJson: String, 
         /**
-         * The digest that pins the policy bundle. Read only for a pack that attests.
-         */policyBundleDigest: String, 
+         * The keys the policy bundle must be signed with: Ed25519 public keys, 64 lowercase hex characters
+         * each. The SDK also refuses a bundle older than one it has accepted under the same key while the
+         * app runs. Read only for a pack that attests.
+         */policyBundleKeys: [String], 
         /**
          * Your backend's nonce for this run, 64 hex characters, which the attested read's receipt signs;
          * empty for a fresh random one.
@@ -5168,7 +6261,7 @@ public struct TreeRunConfig {
         self.trustBundleUrl = trustBundleUrl
         self.trustOperatorKey = trustOperatorKey
         self.policyBundleJson = policyBundleJson
-        self.policyBundleDigest = policyBundleDigest
+        self.policyBundleKeys = policyBundleKeys
         self.relyingPartyNonceHex = relyingPartyNonceHex
         self.resultUrl = resultUrl
         self.resultToken = resultToken
@@ -5213,7 +6306,7 @@ extension TreeRunConfig: Equatable, Hashable {
         if lhs.policyBundleJson != rhs.policyBundleJson {
             return false
         }
-        if lhs.policyBundleDigest != rhs.policyBundleDigest {
+        if lhs.policyBundleKeys != rhs.policyBundleKeys {
             return false
         }
         if lhs.relyingPartyNonceHex != rhs.relyingPartyNonceHex {
@@ -5243,7 +6336,7 @@ extension TreeRunConfig: Equatable, Hashable {
         hasher.combine(trustBundleUrl)
         hasher.combine(trustOperatorKey)
         hasher.combine(policyBundleJson)
-        hasher.combine(policyBundleDigest)
+        hasher.combine(policyBundleKeys)
         hasher.combine(relyingPartyNonceHex)
         hasher.combine(resultUrl)
         hasher.combine(resultToken)
@@ -5255,7 +6348,7 @@ extension TreeRunConfig: Equatable, Hashable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeTreeRunConfig: FfiConverterRustBuffer {
+@_spi(ZktlsLab) public struct FfiConverterTypeTreeRunConfig: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TreeRunConfig {
         return
             try TreeRunConfig(
@@ -5270,7 +6363,7 @@ public struct FfiConverterTypeTreeRunConfig: FfiConverterRustBuffer {
                 trustBundleUrl: FfiConverterString.read(from: &buf), 
                 trustOperatorKey: FfiConverterString.read(from: &buf), 
                 policyBundleJson: FfiConverterString.read(from: &buf), 
-                policyBundleDigest: FfiConverterString.read(from: &buf), 
+                policyBundleKeys: FfiConverterSequenceString.read(from: &buf), 
                 relyingPartyNonceHex: FfiConverterString.read(from: &buf), 
                 resultUrl: FfiConverterString.read(from: &buf), 
                 resultToken: FfiConverterString.read(from: &buf), 
@@ -5290,7 +6383,7 @@ public struct FfiConverterTypeTreeRunConfig: FfiConverterRustBuffer {
         FfiConverterString.write(value.trustBundleUrl, into: &buf)
         FfiConverterString.write(value.trustOperatorKey, into: &buf)
         FfiConverterString.write(value.policyBundleJson, into: &buf)
-        FfiConverterString.write(value.policyBundleDigest, into: &buf)
+        FfiConverterSequenceString.write(value.policyBundleKeys, into: &buf)
         FfiConverterString.write(value.relyingPartyNonceHex, into: &buf)
         FfiConverterString.write(value.resultUrl, into: &buf)
         FfiConverterString.write(value.resultToken, into: &buf)
@@ -5302,14 +6395,14 @@ public struct FfiConverterTypeTreeRunConfig: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeRunConfig_lift(_ buf: RustBuffer) throws -> TreeRunConfig {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeRunConfig_lift(_ buf: RustBuffer) throws -> TreeRunConfig {
     return try FfiConverterTypeTreeRunConfig.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeRunConfig_lower(_ value: TreeRunConfig) -> RustBuffer {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeRunConfig_lower(_ value: TreeRunConfig) -> RustBuffer {
     return FfiConverterTypeTreeRunConfig.lower(value)
 }
 
@@ -5637,7 +6730,7 @@ public func FfiConverterTypeTreeSessionRequest_lower(_ value: TreeSessionRequest
 /**
  * One source the run produced. The data itself goes to your backend, never to the app.
  */
-public struct TreeSource {
+@_spi(ZktlsLab) public struct TreeSource {
     /**
      * The key the pack stores the source under.
      */
@@ -5732,7 +6825,7 @@ extension TreeSource: Equatable, Hashable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeTreeSource: FfiConverterRustBuffer {
+@_spi(ZktlsLab) public struct FfiConverterTypeTreeSource: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TreeSource {
         return
             try TreeSource(
@@ -5759,14 +6852,14 @@ public struct FfiConverterTypeTreeSource: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeSource_lift(_ buf: RustBuffer) throws -> TreeSource {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeSource_lift(_ buf: RustBuffer) throws -> TreeSource {
     return try FfiConverterTypeTreeSource.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeSource_lower(_ value: TreeSource) -> RustBuffer {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeSource_lower(_ value: TreeSource) -> RustBuffer {
     return FfiConverterTypeTreeSource.lower(value)
 }
 
@@ -5774,7 +6867,7 @@ public func FfiConverterTypeTreeSource_lower(_ value: TreeSource) -> RustBuffer 
 /**
  * What `run_tree` tells the app: how the run ended and what it produced, never the data.
  */
-public struct TreeSummary {
+@_spi(ZktlsLab) public struct TreeSummary {
     /**
      * The tree succeeded and, for a pack that attests, the attester accepted its attested read
      * (`handed_off`).
@@ -5939,7 +7032,7 @@ extension TreeSummary: Equatable, Hashable {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeTreeSummary: FfiConverterRustBuffer {
+@_spi(ZktlsLab) public struct FfiConverterTypeTreeSummary: FfiConverterRustBuffer {
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TreeSummary {
         return
             try TreeSummary(
@@ -5976,14 +7069,14 @@ public struct FfiConverterTypeTreeSummary: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeSummary_lift(_ buf: RustBuffer) throws -> TreeSummary {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeSummary_lift(_ buf: RustBuffer) throws -> TreeSummary {
     return try FfiConverterTypeTreeSummary.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTreeSummary_lower(_ value: TreeSummary) -> RustBuffer {
+@_spi(ZktlsLab) public func FfiConverterTypeTreeSummary_lower(_ value: TreeSummary) -> RustBuffer {
     return FfiConverterTypeTreeSummary.lower(value)
 }
 
@@ -6068,6 +7161,215 @@ public func FfiConverterTypeTypedOutput_lift(_ buf: RustBuffer) throws -> TypedO
 #endif
 public func FfiConverterTypeTypedOutput_lower(_ value: TypedOutput) -> RustBuffer {
     return FfiConverterTypeTypedOutput.lower(value)
+}
+
+
+/**
+ * Where `verify` runs: our backend, the URLs of the trust and policy bundles, and the keys they are
+ * checked against. Every value is public.
+ */
+@_spi(ZktlsLab) public struct VerifyEnv {
+    /**
+     * Our backend, `https://`.
+     */
+    public var backendUrl: String
+    /**
+     * The URL that serves the latest trust bundle, `https://`, as `TreeRunConfig.trust_bundle_url`.
+     */
+    public var trustBundleUrl: String
+    /**
+     * The URL that serves the latest policy bundle, `https://`.
+     */
+    public var policyBundleUrl: String
+    /**
+     * The operator public key, PEM, as `TreeRunConfig.trust_operator_key`: the trust bundle and
+     * every pack are checked against it.
+     */
+    public var operatorKey: String
+    /**
+     * The keys the policy bundle must be signed with, as `TreeRunConfig.policy_bundle_keys`: Ed25519
+     * public keys, 64 lowercase hex characters each.
+     */
+    public var policyKeys: [String]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Our backend, `https://`.
+         */backendUrl: String, 
+        /**
+         * The URL that serves the latest trust bundle, `https://`, as `TreeRunConfig.trust_bundle_url`.
+         */trustBundleUrl: String, 
+        /**
+         * The URL that serves the latest policy bundle, `https://`.
+         */policyBundleUrl: String, 
+        /**
+         * The operator public key, PEM, as `TreeRunConfig.trust_operator_key`: the trust bundle and
+         * every pack are checked against it.
+         */operatorKey: String, 
+        /**
+         * The keys the policy bundle must be signed with, as `TreeRunConfig.policy_bundle_keys`: Ed25519
+         * public keys, 64 lowercase hex characters each.
+         */policyKeys: [String]) {
+        self.backendUrl = backendUrl
+        self.trustBundleUrl = trustBundleUrl
+        self.policyBundleUrl = policyBundleUrl
+        self.operatorKey = operatorKey
+        self.policyKeys = policyKeys
+    }
+}
+
+
+
+extension VerifyEnv: Equatable, Hashable {
+    public static func ==(lhs: VerifyEnv, rhs: VerifyEnv) -> Bool {
+        if lhs.backendUrl != rhs.backendUrl {
+            return false
+        }
+        if lhs.trustBundleUrl != rhs.trustBundleUrl {
+            return false
+        }
+        if lhs.policyBundleUrl != rhs.policyBundleUrl {
+            return false
+        }
+        if lhs.operatorKey != rhs.operatorKey {
+            return false
+        }
+        if lhs.policyKeys != rhs.policyKeys {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(backendUrl)
+        hasher.combine(trustBundleUrl)
+        hasher.combine(policyBundleUrl)
+        hasher.combine(operatorKey)
+        hasher.combine(policyKeys)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+@_spi(ZktlsLab) public struct FfiConverterTypeVerifyEnv: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VerifyEnv {
+        return
+            try VerifyEnv(
+                backendUrl: FfiConverterString.read(from: &buf), 
+                trustBundleUrl: FfiConverterString.read(from: &buf), 
+                policyBundleUrl: FfiConverterString.read(from: &buf), 
+                operatorKey: FfiConverterString.read(from: &buf), 
+                policyKeys: FfiConverterSequenceString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VerifyEnv, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.backendUrl, into: &buf)
+        FfiConverterString.write(value.trustBundleUrl, into: &buf)
+        FfiConverterString.write(value.policyBundleUrl, into: &buf)
+        FfiConverterString.write(value.operatorKey, into: &buf)
+        FfiConverterSequenceString.write(value.policyKeys, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+@_spi(ZktlsLab) public func FfiConverterTypeVerifyEnv_lift(_ buf: RustBuffer) throws -> VerifyEnv {
+    return try FfiConverterTypeVerifyEnv.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+@_spi(ZktlsLab) public func FfiConverterTypeVerifyEnv_lower(_ value: VerifyEnv) -> RustBuffer {
+    return FfiConverterTypeVerifyEnv.lower(value)
+}
+
+
+/**
+ * What `verify` tells the app: the verification and how each platform ended, in order, never the data.
+ */
+public struct VerifyOutcome {
+    /**
+     * The verification's id, which every webhook about it carries.
+     */
+    public var verificationId: String
+    /**
+     * Each platform, in the order they ran.
+     */
+    public var platforms: [PlatformOutcome]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The verification's id, which every webhook about it carries.
+         */verificationId: String, 
+        /**
+         * Each platform, in the order they ran.
+         */platforms: [PlatformOutcome]) {
+        self.verificationId = verificationId
+        self.platforms = platforms
+    }
+}
+
+
+
+extension VerifyOutcome: Equatable, Hashable {
+    public static func ==(lhs: VerifyOutcome, rhs: VerifyOutcome) -> Bool {
+        if lhs.verificationId != rhs.verificationId {
+            return false
+        }
+        if lhs.platforms != rhs.platforms {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(verificationId)
+        hasher.combine(platforms)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVerifyOutcome: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VerifyOutcome {
+        return
+            try VerifyOutcome(
+                verificationId: FfiConverterString.read(from: &buf), 
+                platforms: FfiConverterSequenceTypePlatformOutcome.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VerifyOutcome, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.verificationId, into: &buf)
+        FfiConverterSequenceTypePlatformOutcome.write(value.platforms, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVerifyOutcome_lift(_ buf: RustBuffer) throws -> VerifyOutcome {
+    return try FfiConverterTypeVerifyOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVerifyOutcome_lower(_ value: VerifyOutcome) -> RustBuffer {
+    return FfiConverterTypeVerifyOutcome.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -6420,6 +7722,92 @@ extension Phase: Equatable, Hashable {}
 
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * How one platform of a verification ended on the phone.
+ */
+
+public enum PlatformStatus {
+    
+    /**
+     * The platform's run reached our backend: the attester took its read (`Detached`), or its result
+     * was delivered. The partner's server gets the platform's webhook when its result arrives.
+     */
+    case done
+    /**
+     * The run failed; `PlatformOutcome.reason` says why. The partner's server is told too.
+     */
+    case failed
+    /**
+     * The run never ran: the user declined the intro, stopped between platforms, or closed a
+     * platform's sign-in page or declined its sign-in notice, which ends that platform and every
+     * later one.
+     */
+    case notStarted
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePlatformStatus: FfiConverterRustBuffer {
+    typealias SwiftType = PlatformStatus
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlatformStatus {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .done
+        
+        case 2: return .failed
+        
+        case 3: return .notStarted
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PlatformStatus, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .done:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .notStarted:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlatformStatus_lift(_ buf: RustBuffer) throws -> PlatformStatus {
+    return try FfiConverterTypePlatformStatus.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePlatformStatus_lower(_ value: PlatformStatus) -> RustBuffer {
+    return FfiConverterTypePlatformStatus.lower(value)
+}
+
+
+
+extension PlatformStatus: Equatable, Hashable {}
+
+
+
 
 /**
  * Why a verb failed. Every failure ends the session: the user starts a new one; the SDK never retries.
@@ -6443,7 +7831,8 @@ public enum SdkError {
     case SessionLost
     /**
      * The session was cancelled: `cancel` was called, or a verb's caller gave up on it (its Task or
-     * coroutine was cancelled).
+     * coroutine was cancelled). `run_tree` also ends with it when the user closes its page or declines
+     * its sign-in notice; the session itself is not cancelled then.
      */
     case Cancelled
     /**
@@ -6485,6 +7874,23 @@ public enum SdkError {
      */
     case Policy(String
     )
+    /**
+     * `verify` was refused before any platform ran: our backend refused the start (or the App Attest
+     * key's registration), or the device could not attest itself. `code` is one word the app maps to
+     * what it does, among them `app_key_invalid`, `device_not_verified`, `attest_key_unknown`,
+     * `platforms_invalid`, `platform_unavailable`, `reference_invalid`, `token_invalid` and
+     * `limit_reached` (the error catalogue lists each), and the facade's `not_configured` for a
+     * `verify` before `configure`; `message` says more, for your logs. The refusal screen has been
+     * shown, except for `not_configured`. Retrying does not help until the cause is gone.
+     */
+    case Refused(
+        /**
+         * The refusal's code, a snake_case word.
+         */code: String, 
+        /**
+         * What it means here, for your logs (for `platform_unavailable`, which platform).
+         */message: String
+    )
 }
 
 
@@ -6515,6 +7921,10 @@ public struct FfiConverterTypeSdkError: FfiConverterRustBuffer {
             )
         case 11: return .Policy(
             try FfiConverterString.read(from: &buf)
+            )
+        case 12: return .Refused(
+            code: try FfiConverterString.read(from: &buf), 
+            message: try FfiConverterString.read(from: &buf)
             )
 
          default: throw UniffiInternalError.unexpectedEnumCase
@@ -6573,6 +7983,12 @@ public struct FfiConverterTypeSdkError: FfiConverterRustBuffer {
             writeInt(&buf, Int32(11))
             FfiConverterString.write(v1, into: &buf)
             
+        
+        case let .Refused(code,message):
+            writeInt(&buf, Int32(12))
+            FfiConverterString.write(code, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            
         }
     }
 }
@@ -6592,7 +8008,7 @@ extension SdkError: Foundation.LocalizedError {
  * What stands behind a source's data.
  */
 
-public enum SourceEvidence {
+@_spi(ZktlsLab) public enum SourceEvidence {
     
     /**
      * The phone read it in the page. Nothing vouches for it.
@@ -6608,7 +8024,7 @@ public enum SourceEvidence {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeSourceEvidence: FfiConverterRustBuffer {
+@_spi(ZktlsLab) public struct FfiConverterTypeSourceEvidence: FfiConverterRustBuffer {
     typealias SwiftType = SourceEvidence
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SourceEvidence {
@@ -6642,14 +8058,14 @@ public struct FfiConverterTypeSourceEvidence: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSourceEvidence_lift(_ buf: RustBuffer) throws -> SourceEvidence {
+@_spi(ZktlsLab) public func FfiConverterTypeSourceEvidence_lift(_ buf: RustBuffer) throws -> SourceEvidence {
     return try FfiConverterTypeSourceEvidence.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeSourceEvidence_lower(_ value: SourceEvidence) -> RustBuffer {
+@_spi(ZktlsLab) public func FfiConverterTypeSourceEvidence_lower(_ value: SourceEvidence) -> RustBuffer {
     return FfiConverterTypeSourceEvidence.lower(value)
 }
 
@@ -6722,6 +8138,96 @@ extension TreeHostError: Foundation.LocalizedError {
         String(reflecting: self)
     }
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * What `verify` runs: platforms the app names, or a token the partner's server made for them.
+ */
+
+internal enum VerifyRequest {
+    
+    /**
+     * The platforms to run, in order, and the partner's reference for the verification.
+     */
+    case platforms(
+        /**
+         * Platform ids as we name them (for example `zktls-demo`): 1 to 10, no duplicates.
+         */platforms: [String], 
+        /**
+         * The partner's reference, which every webhook carries: 1 to 128 letters, digits, '.', '_' or '-'.
+         */reference: String
+    )
+    /**
+     * A token the partner's server made with `POST /partner/verification-tokens`: it carries the
+     * platforms and the reference, and is used once.
+     */
+    case token(
+        /**
+         * The token, `vt_` and 43 base64url characters.
+         */token: String
+    )
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal struct FfiConverterTypeVerifyRequest: FfiConverterRustBuffer {
+    typealias SwiftType = VerifyRequest
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VerifyRequest {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .platforms(platforms: try FfiConverterSequenceString.read(from: &buf), reference: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 2: return .token(token: try FfiConverterString.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: VerifyRequest, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .platforms(platforms,reference):
+            writeInt(&buf, Int32(1))
+            FfiConverterSequenceString.write(platforms, into: &buf)
+            FfiConverterString.write(reference, into: &buf)
+            
+        
+        case let .token(token):
+            writeInt(&buf, Int32(2))
+            FfiConverterString.write(token, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypeVerifyRequest_lift(_ buf: RustBuffer) throws -> VerifyRequest {
+    return try FfiConverterTypeVerifyRequest.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypeVerifyRequest_lower(_ value: VerifyRequest) -> RustBuffer {
+    return FfiConverterTypeVerifyRequest.lower(value)
+}
+
+
+
+extension VerifyRequest: Equatable, Hashable {}
+
+
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -6798,6 +8304,30 @@ fileprivate struct FfiConverterOptionTypeClaim: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeVerifyEnv: FfiConverterRustBuffer {
+    typealias SwiftType = VerifyEnv?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeVerifyEnv.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeVerifyEnv.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -6840,6 +8370,31 @@ fileprivate struct FfiConverterSequenceTypePlatformHeader: FfiConverterRustBuffe
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePlatformHeader.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlatformOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = [PlatformOutcome]
+
+    public static func write(_ value: [PlatformOutcome], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlatformOutcome.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlatformOutcome] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlatformOutcome]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlatformOutcome.read(from: &buf))
         }
         return seq
     }
@@ -7162,7 +8717,7 @@ public func prove(witness: WitnessHandle, session: Session)async throws  -> Proo
  * summary whose `succeeded` is false, with the platform's reason; a refused pack, a cancel and an
  * upload the attester did not accept are errors.
  */
-public func runTree(cfg: TreeRunConfig, host: TreeHost, session: Session)async throws  -> TreeSummary {
+@_spi(ZktlsLab) public func runTree(cfg: TreeRunConfig, host: TreeHost, session: Session)async throws  -> TreeSummary {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -7186,7 +8741,33 @@ public func setPlatformHttp(http: PlatformHttp) {try! rustCall() {
 }
 }
 /**
- * Test hook: a policy from a pack's parts, for the hosts' vector tests. Internal in the bindings.
+ * Runs a partner's platforms, one after another, with the SDK's own screens. The device attests
+ * itself (a live `app_key`; a test key skips it), our backend starts a verification of `request`'s
+ * platforms, and each platform's pack runs in the host's WebView as `run_tree` runs it, its attested
+ * read handed to the attester, which posts the result to our backend; the partner's server gets a
+ * webhook per platform. Returns how each platform ended on the phone, never its data. A start that is
+ * refused, or cannot be made, shows the refusal screen and returns its error (`Refused` for a refusal);
+ * once the verification has started, it returns an outcome however its platforms end. `env` is our
+ * production environment when `None`. One `verify` per `Session` at a time: its runs report their
+ * phases on that session, and it holds background time by them.
+ */
+internal func verify(appKey: String, request: VerifyRequest, env: VerifyEnv?, host: VerifyHost, session: Session)async throws  -> VerifyOutcome {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_func_verify(FfiConverterString.lower(appKey),FfiConverterTypeVerifyRequest.lower(request),FfiConverterOptionTypeVerifyEnv.lower(env),FfiConverterTypeVerifyHost.lower(host),FfiConverterTypeSession.lower(session)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_zktls_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeVerifyOutcome.lift,
+            errorHandler: FfiConverterTypeSdkError.lift
+        )
+}
+/**
+ * Test hook: a policy from a pack's parts, for the hosts' vector tests, with no names and no data
+ * categories. Internal in the bindings.
  */
 internal func zktlsConfinementPolicy(domain: String, allowlist: [String], signInDomains: [String], neverRecord: [String]) -> ConfinementPolicy {
     return try!  FfiConverterTypeConfinementPolicy.lift(try! rustCall() {
@@ -7451,7 +9032,10 @@ private var initializationResult: InitializationResult = {
     if (uniffi_zktls_sdk_checksum_func_set_platform_http() != 63658) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_func_zktls_confinement_policy() != 49741) {
+    if (uniffi_zktls_sdk_checksum_func_verify() != 35328) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_func_zktls_confinement_policy() != 50878) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zktls_sdk_checksum_func_zktls_init_threads() != 64671) {
@@ -7517,10 +9101,19 @@ private var initializationResult: InitializationResult = {
     if (uniffi_zktls_sdk_checksum_method_confinementpolicy_bridge_domains() != 55825) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_zktls_sdk_checksum_method_confinementpolicy_data_categories() != 16693) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_zktls_sdk_checksum_method_confinementpolicy_decide() != 10028) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zktls_sdk_checksum_method_confinementpolicy_display_host() != 26946) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_confinementpolicy_pack_name() != 19888) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_confinementpolicy_provider_name() != 52403) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zktls_sdk_checksum_method_cookiehandle_count() != 58935) {
@@ -7553,10 +9146,10 @@ private var initializationResult: InitializationResult = {
     if (uniffi_zktls_sdk_checksum_method_platformhttp_head_ms() != 17864) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_platformhttp_post_bytes() != 57066) {
+    if (uniffi_zktls_sdk_checksum_method_platformhttp_post_bytes() != 7540) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_platformhttp_get_bytes() != 239) {
+    if (uniffi_zktls_sdk_checksum_method_platformhttp_get_bytes() != 43362) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zktls_sdk_checksum_method_progresssink_on_progress() != 14315) {
@@ -7625,6 +9218,45 @@ private var initializationResult: InitializationResult = {
     if (uniffi_zktls_sdk_checksum_method_treehost_finish() != 52553) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_install_id() != 2777) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_needs_registration() != 47769) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_register_key() != 18832) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_registered() != 43404) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_sign() != 34390) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_intro() != 38052) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_next() != 37072) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_failed() != 59064) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_finish() != 53716) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_refusal() != 45797) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_tree_host() != 30684) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_begin_background() != 31034) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_end_background() != 48629) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_zktls_sdk_checksum_method_witnesshandle_bytes_summary() != 30559) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -7645,6 +9277,7 @@ private var initializationResult: InitializationResult = {
     uniffiCallbackInitPlatformHttp()
     uniffiCallbackInitProgressSink()
     uniffiCallbackInitTreeHost()
+    uniffiCallbackInitVerifyHost()
     return InitializationResult.ok
 }()
 

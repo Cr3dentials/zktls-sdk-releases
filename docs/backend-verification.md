@@ -1,5 +1,9 @@
 # Verifying a claim on your backend
 
+This page is for proof mode's claim. With `verify`, the attester's signed claim comes in your
+`platform.finished` webhook instead, and [checking a result](backend-tree-results.md#checking-a-result-typescript-node-22-or-later)
+shows how to check one.
+
 `claim()` verifies the claim on the phone, but your backend must not trust the phone. Send it
 `claim.encoded`, the claim's canonical bytes in base64, and verify them again with one of our libraries.
 Each does the same checks, in the same order, as the SDK.

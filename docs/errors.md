@@ -1,7 +1,12 @@
 # Errors
 
-Every verb returns, or throws one error: `SdkError` in Swift, `SdkException` in Kotlin, with the same
-variants. **The SDK never retries, and your app must not retry behind the user's back.** A capture
+Every call returns, or throws one error: `SdkError` in Swift, `SdkException` in Kotlin, with the same
+variants. `verify` throws only when the verification did not start: `Refused` for a refusal, another
+variant (most often `Transport`) when the start could not be made. Either way the SDK has shown its
+refusal screen, except for `not_configured` and a call your app cancelled. Once the verification has
+started, `verify` returns an outcome, and a platform that fails is in it, not an error
+([how each platform ended](#how-each-platform-ended-in-verify)).
+**The SDK never retries, and your app must not retry behind the user's back.** A capture
 that failed before the institution's reply was frozen cannot be resumed: resuming would reuse a
 secret. So every row below ends, at most, with the user choosing to start a new session.
 
@@ -15,6 +20,7 @@ secret. So every row below ends, at most, with the user choosing to start a new 
 | `InsufficientMemory` | Close other apps, then try again. | When they choose |
 | `Transport` | A network problem. | When they choose |
 | `Policy` | Depends on the message, below. | Only after the cause is fixed |
+| `Refused` | `verify` only: the SDK has shown its refusal screen, except for `not_configured`. Depends on the code, below. | Only after the cause is fixed; `limit_reached` and `unavailable`, later |
 
 ### `NotLoggedIn`
 
@@ -47,7 +53,9 @@ posts the result. Your backend may hear of a run your app saw cancelled, as afte
 
 `runTree` also ends with `Cancelled` when the user closes its page: its Close button, Back on Android,
 a swipe down on iOS. That run posts nothing to the result URL, and the session itself is not
-cancelled: `isCancelled` reads false.
+cancelled: `isCancelled` reads false. So does a run whose sign-in notice (the disclosure) the user
+declines: it too posts nothing. Before this release, a declined notice failed the run instead, and a
+failed result was posted.
 
 ### `WrongEvidence`
 
@@ -93,6 +101,9 @@ reason text, not the Rust `Display` form (no `transport: ` prefix): in Swift the
 | `allocate returned <status>: <body>` | The front door refused the session: 400, a malformed field, and 401 or 403, the app credential (your configuration); 429, a quota (the user starts again later). The body, at most 256 bytes, says more |
 | `SDK task failed: <reason>` | The SDK's own task stopped unexpectedly; report it |
 | `set_platform_http was never called` | The SDK's platform HTTP client was never installed; this should not happen — report it |
+| `our backend is unreachable: <call>` | `verify`: our backend could not be reached for `<call>` (`attest challenge`, `attest key` or `verification start`). Nothing was started; the SDK showed its refusal screen ("Verification isn't available right now"), and the user starts again later |
+| `our backend answered <status>: <call>` / `our backend's reply is malformed: <call>` | `verify`: our backend's answer to `<call>` is not one this SDK reads (not the answer, and not a refusal; for the start, also an answer whose platforms are not the ones asked for, in order, or that has none or more than 10). Nothing was started, and the SDK showed its refusal screen; report it with the status |
+| `host callback failed: <reason>` | `verify`: the SDK's own iOS or Android layer failed while attesting the device; the SDK showed its refusal screen. Report it |
 | `tree host: <reason>` | `runTree`: the WebView host failed while handing the attested read its cookies or session material | Report it |
 | `attester error: attester busy` / `attester error: attester not ready` | `runTree`, a pack that attests: the attester has as many runs in flight as it takes, or has not yet started taking them. Nothing was handed off and `Detached` was not reported; the user starts a new run in a minute or two |
 | `attester error: policy bundle: <reason>` | `runTree`: the attester could not fetch the policy bundle to check the upload against. Nothing was handed off; the user starts a new run later. A refusal a new run would meet again is a `Policy` error instead (`attester refused the upload: <reason>`) |
@@ -117,7 +128,8 @@ text, `case .Policy(let text)` in Swift and `e.v1` in Kotlin (not `e.message`, w
 | `trust bundle: <parse error>` | The bundle is not valid JSON | Refetch the bundle |
 | `enclave not pinned by the trust bundle: <id>` / `enclave not pinned by the trust bundle: the allocation named no verifier the trust bundle accepts` | An enclave the bundle does not list, or a session assigned only verifiers it does not list; `capture` stops before it reaches an enclave. For `runTree`, also an enclave the bundle lists as a capture's, not an attester (`… publishes no claim key for this epoch: it is not an attester`), or an attester whose claim key it does not list (`… the attester's claim key for this epoch is not listed`): nothing is uploaded. An enclave whose key the bundle lists for another role or cell reads `… certificate key belongs to a member of another role or cell`. These two texts are new in this release: before, the first read `… publishes no claim key for this epoch: it is not an attester` and the second `… is not a live epoch key of any member for this role and cell`. Most often your copy predates the enclave's latest certificate: with `trustBundleUrl` set, the SDK has refetched the bundle once already, and the text ends `(with the trust bundle refetched)`, `(the trust bundle refetch failed: <reason>)` or `(the trust bundle was already refetched in this run)` | Set `trustBundleUrl`; without it, fetch the bundle right before each session. If it repeats with the bundle refetched, report it |
 | `trust_bundle_url must be https://, or empty` | `trustBundleUrl` is set to something other than an `https://` URL; nothing was sent | Your configuration |
-| `policy bundle: <reason>` / `policy bundle is not the pinned one (digest): <reason>` | The policy bundle is malformed, or not the one whose digest you pinned | Refetch it; check `policy_bundle_digest` |
+| `policy bundle: <reason>` / `policy bundle is not the pinned one (digest): <reason>` | The policy bundle is malformed, or (a `SessionConfig` session) not the one whose digest you pinned | Refetch it; check `policy_bundle_digest` |
+| `policy bundle: not signed with one of policy_bundle_keys` / `policy bundle: version N is older than version M already seen` | `runTree`: the policy bundle is not signed with a key in `policy_bundle_keys`, or is older than one this app already accepted under that key. Nothing has been shown to the user | Refetch the bundle; check `policy_bundle_keys` |
 | `no policy <id> in the pinned bundle` / `policy <id> is for profile <id>` | `policy_id` or `profile_id` does not match the bundle | Your configuration |
 | `the profile declares no cookie_domains` / `the profile's URL must be https://` / `bad port in the profile's URL` | The profile is malformed | Contact us |
 | `profile <id> has N requests; a capture sends one` / `profile <id> needs template values the SDK is not given` / `profile <id> has no secret Cookie header for the login's cookies` / `header <name> has no source: login yields cookies only` | The profile needs something this SDK version cannot give it | Contact us |
@@ -133,7 +145,9 @@ text, `case .Policy(let text)` in Swift and `e.v1` in Kotlin (not `e.message`, w
 | `platform_id must be 1 to 64 letters, digits, '-', '_' or '.'` / `base_url must be https://` | `runTree`: the platform id or the front door is malformed. Nothing has been shown to the user | Your configuration |
 | `our API has no pack for platform <id>` | `runTree`: we publish no pack for that platform id | Check `platformId`; contact us |
 | `our API is unreachable for the pack` / `the pack fetch answered <status>` | `runTree`: the platform's pack could not be fetched. Nothing has been shown to the user | Start a new run; contact us if it repeats |
-| `header <name> may not go to the pack URL` | A bug in the SDK's pack fetch | Report it |
+| `GET URL must be https://` / `header <name> may not go to the GET URL` | A bug in one of the SDK's GETs: the pack, a bundle, or our backend's attest challenge | Report it |
+| `verify env: <field> must be https://` / `verify env: operator_key is empty` / `verify env: operator_key: <reason>` / `verify env: policy_keys must be one or more keys, 64 lowercase hex characters each` | `verify` in the lab, with an environment whose `backend_url`, `trust_bundle_url` or `policy_bundle_url` is not `https://`, whose operator key is missing or not a key (`<reason>` as for `trust bundle: the operator key …`), or whose policy keys are missing or not Ed25519 public keys in lowercase hex. Nothing was sent and no screen was shown | Your configuration |
+| `backend_url must be https://` / `header <name> may not go to the backend` | A bug in the SDK's calls to our backend | Report it |
 | `pack: the reply is over 512 KiB` / `pack: the reply is not a signed pack` / `pack: the operator signature does not verify` / `pack: the operator key …` | `runTree`: what came back is not a pack we signed, or `trust_operator_key` is malformed or not ours. The SDK runs only a pack the operator signed. Nothing has been shown to the user | Check `trust_operator_key`; contact us if it repeats |
 | `tree pack: <code> at <path>: <reason>` | `runTree`: the signed pack breaks a rule of the pack format this SDK version knows; `<code>` is one of `json`, `unsupported_node`, `envelope`, `domain`, `undefined_reference`, `collect`, `caps`, `attest`, `limits`, `script`. Nothing has been shown to the user | Update the SDK; contact us |
 | `pack <id> is not platform <id>'s` / `pack version <version> is not dotted numbers` / `pack <id> version <version> is older than one this app already ran` | `runTree`: the signed pack is for another platform, or older than one this app already ran | Contact us |
@@ -141,6 +155,7 @@ text, `case .Policy(let text)` in Swift and `e.v1` in Kotlin (not `e.message`, w
 | `params_json must be a JSON object, or empty` / `params_json is N bytes, over 16384` | `runTree`: the run's inputs are not a JSON object as text, or are over 16 KiB. Nothing has been shown to the user | Your configuration |
 | `this client has no SessionConfig: create it with one to log in, capture and claim` | `login`, `capture` or `claim` on a client made with `ZktlsClient()` for tree runs | Your code: create the client with a `SessionConfig` |
 | `relying_party_nonce_hex must be 64 hex characters` | `runTree`: the nonce is not 32 bytes in hex | Your configuration |
+| `policy_bundle_keys must be one or more keys, 64 lowercase hex characters each` | `runTree`: `policy_bundle_keys` is empty, or a pinned policy key is not 64 lowercase hex characters (an Ed25519 public key). Nothing has been shown to the user | Your configuration |
 | `the pack's attesters must be KOnly` / `policy <id> is not an attested KOnly policy` / `the pack's profile is not policy <id>'s` / `profile <id> has no attest block` / `profile <id> has no request` | `runTree`: the pack's attested read does not match the policy bundle you pinned. Nothing has been shown to the user | Refetch both; contact us if it repeats |
 | `navigation_refused: <host>` | `runTree`: the page or a popup tried to load an address the pack does not allow (another host, `http`, or a redirect off the list), so the SDK cancelled it and ended the run. `<host>` is the host alone, and may be empty ([where the page may go](integration-packs.md#where-the-page-may-go)) | The user left the platform, for example by tapping a link off it, and can start a new run. If it repeats at the same host, report it with the host: a sign-in provider the pack does not list in `sign_in_domains` is refused |
 | `origin_refused: <host>` | `runTree`: the run needed the bridge, the pack's script or a declared cookie where they may not run: off the platform's domains (a sign-in host, say) or, for the script and cookies, on an address the pack records nothing on | The user can start a new run; if it repeats at the same host, report it with the host |
@@ -152,7 +167,35 @@ text, `case .Policy(let text)` in Swift and `e.v1` in Kotlin (not `e.message`, w
 | `the upload is <n> bytes, over the attester's 6 MiB` | `runTree`: the attested request and the observed result together are larger than the attester takes, so nothing was uploaded or handed off | Contact us: the pack's caps are too wide |
 | `attester refused the upload: <reason>` | `runTree`: the attester's verdict on this run's upload, in its words, which a new run would meet again. For example `result host not allowed` (your `resultUrl`'s host is not one the attester posts to), `the result token is empty or not visible ASCII`, `request 0 …` (the attested request does not render from the policy), `the policy is not in the policy bundle` / `the policy is not an attested policy` / `the policy's caps.seconds is over the attester's 14400`, `the upload is <n> bytes, over 6 MiB`, `the partial result …` or `the relying-party nonce is …`. Nothing was handed off and `Detached` was not reported | `result host not allowed` and the token: your backend's result URL and token. Anything else: report it with the reason |
 
-Log the variant and, for `Transport` and `Policy`, its text. Never log a handle or a cookie. A printed
+### `Refused`
+
+`verify` did not start: our backend refused the start, or the registration of the install's App Attest
+key, or the device could not attest itself. Except for `not_configured`, the SDK has already shown its refusal screen ("This device
+can't be verified" for `device_not_verified`, "Verification isn't available right now" for any other
+code), and no platform ran. In Swift, `catch SdkError.Refused(let code, let message)`; in Kotlin,
+`catch (e: SdkException.Refused)` with `e.code` and `e.message` (here `e.message` is the refusal's own
+message, not the `v1=<text>` form). `message` is for your logs; `code` is one of:
+
+| `code` | Cause | Fix |
+|---|---|---|
+| `app_key_invalid` | The app key is unknown or inactive, or is neither a `zk_live_` nor a `zk_test_` key | Your configuration: copy the key from your app's settings again |
+| `device_not_verified` | A live key on a device that failed App Attest or Play Integrity, or cannot run them: a simulator or emulator, an Android phone without Google Play services, or one whose Google Play services cannot get a token (offline, say), a build that is not your registered app, or an attestation outage | Test on simulators and emulators with your test key; a live key needs a real device running your registered build |
+| `attest_key_unknown` | Our backend did not know the install's App Attest key, even after the SDK registered it once more | Treat it as `device_not_verified`; report it if it repeats |
+| `platforms_invalid` | No platform, more than 10, one twice, or an id that is not 1 to 64 letters, digits, `.`, `_` or `-` | Your code |
+| `platform_unavailable` | A platform is not enabled for your app, is unknown, is not one `verify` runs, or (with a test key) is not `zktls-demo`; `message` names it | Your configuration |
+| `reference_invalid` | The reference is not 1 to 128 letters, digits, `.`, `_` or `-` | Your code |
+| `token_invalid` | The token from `POST /partner/verification-tokens` is unknown, already used, older than 15 minutes, or for another app. A start refused after the token was read, such as with `platform_unavailable`, uses it up too | Your server makes a new one |
+| `limit_reached` | An hourly limit: 10 verifications per install with a live key (30 with a test key), or your app's limit (1,000 by default with a live key, 100 with a test key). Also our request rate limit, and the limit on device checks for one app or one network | The user starts again later. Contact us if your app's limit is too low |
+| `account_inactive` | Your team cannot start verifications: its trial is used up, its subscription has lapsed, or it has not accepted the terms of service; `message` says which. Test-key verifications do not count against a trial | Sign in to the dashboard and accept the terms, or contact us about your plan |
+| `request_invalid` | Our backend could not read the SDK's request (413 for a body over 64 KiB). Not expected from your code, unless it passes a reference or platform ids over 64 KiB in all | Update the SDK; report it with the message if it repeats |
+| `unavailable` | Our backend could not start the verification just now, on our side (a 5xx with a refusal body; one without, such as a gateway's page, is `Transport("our backend answered <status>: <call>")`) | The user starts again in a little while; report it if it lasts |
+| `not_configured` | `Zktls.verify` was called before `Zktls.configure(appKey:)`. On Android, also a live key in a build of the SDK with no Play Integrity project number compiled in, which could never check a device; our release gate stops such a build from shipping. Thrown by the facade before anything starts; no screen is shown | Your code: call `configure` when your app launches |
+
+`platforms_invalid`, `platform_unavailable`, `reference_invalid` and `token_invalid` come from your code or
+your setup, so fix them before you release; `account_inactive` comes from your account. Every code but
+`device_not_verified` shows "Verification isn't available right now".
+
+Log the variant and, for `Transport` and `Policy`, its text; for `Refused`, its code. Never log a handle or a cookie. A printed
 `SessionConfig` (Kotlin's `toString()`, Swift's `print` and `dump`) shows only `baseUrl`, `profileId`
 and `policyId`, never the app credential.
 
@@ -174,6 +217,39 @@ For a pack that attests, the phone posts nothing once the attester has the run: 
 `delivered` false and `deliveryError` empty. The attester posts the result, retrying on its own, and
 your backend's deadline for the run tells you if it never arrives
 ([backend-tree-results.md](backend-tree-results.md#a-result-from-the-attester)).
+
+## How each platform ended in `verify`
+
+Once our backend has started a verification, `verify` returns a `VerifyOutcome` however its platforms
+end, never their data: each platform's result reaches your server from ours, in its own webhook.
+`PlatformOutcome.status` is:
+
+| `status` | Meaning |
+|---|---|
+| `Done` | The platform's run reached us: the attester took its read (or its result was delivered). Your server gets its `platform.finished` webhook when the result arrives |
+| `Failed` | The run failed; `reason` says why, and your server is told too. The next platform still runs: each counts on its own |
+| `NotStarted` | The run never ran: the user declined the intro, chose "Stop here" between platforms, or closed a platform's sign-in page or declined its sign-in notice, which ends that platform and every later one |
+
+A platform the SDK handed to the attester is `Done`. If its result then never reaches us, our backend
+fails the run about 2 hours after the verification started, with the error code `no_result`, and your
+server's `platform.finished` webhook says so. That needs the app to have reported the hand-off, which the
+SDK does at the end of the flow: if the app was killed or offline before then, and no result arrives, the
+platform ends as `not_started` in `verification.finished`, with no `platform.finished`.
+
+A failed platform's `reason` is one of these, and only these; the SDK also reports it to our backend,
+which sends it to your server as the run's error code:
+
+| `reason` | Meaning |
+|---|---|
+| `platform_failed` | The platform's own steps failed, for example the sign-in did not finish or the account has no such data |
+| `upload_refused` | The attester refused the run's read (the `Policy` message `attester refused the upload: <reason>` for `runTree`) |
+| `bundles_unavailable` | The trust or policy bundle could not be fetched, or did not verify (not signed with the keys the SDK pins, or older than one it already accepted); the next platform fetches them again |
+| `delivery_failed` | A result the phone posts did not reach us |
+| `network` | The connection, or the platform's reply on it, broke off (`Transport`, `SessionLost`, `Truncated`, `ExtraResponse`, `Reordered`) |
+| `navigation_refused` | The page went where the platform's pack does not allow, or needed something where it may not run (`navigation_refused: <host>` or `origin_refused: <host>`) |
+| `not_logged_in` | The sign-in left no cookie to read the platform with (`NotLoggedIn`) |
+| `configuration` | The SDK refused the platform's pack, the policy, or the run's settings (any other `Policy` message, above) |
+| `internal` | Anything else; report it |
 
 ## A proof that was not accepted
 

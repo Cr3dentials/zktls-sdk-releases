@@ -10,7 +10,7 @@ let package = Package(
         .library(name: "ZktlsSDK", targets: ["ZktlsSDK"])
     ],
     targets: [
-        .binaryTarget(name: "ZktlsSDKFFI", url: "https://github.com/Cr3dentials/zktls-sdk-releases/releases/download/1.0.0/ZktlsSDKFFI-1.0.0.xcframework.zip", checksum: "f9979e9b65f875a51a7e735d6d6ff63a4990421f3b41c2e43d6b7ec818e84856"),
+        .binaryTarget(name: "ZktlsSDKFFI", url: "https://github.com/Cr3dentials/zktls-sdk-releases/releases/download/2.0.0/ZktlsSDKFFI-2.0.0.xcframework.zip", checksum: "4aab8ff856ed24ff1344009a2efbd1500c9d43247a54132e68fa12da44d66d97"),
         .target(
             name: "ZktlsSDK", dependencies: ["ZktlsSDKFFI"], path: "Sources/ZktlsSDK",
             resources: [.copy("PrivacyInfo.xcprivacy")]),

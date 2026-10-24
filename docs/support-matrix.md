@@ -17,6 +17,9 @@
 | Kotlin standard library, Android | 2.2.10 or later (the AAR's dependency) |
 | Android 16 KB pages | Yes, checked on every release build |
 | Installation, Android | Maven Central, `xyz.cr3dentials:zktls-sdk` |
+| `verify` with a test key | Any device, the iOS Simulator and Android emulators included |
+| `verify` with a live key, iOS | App Attest: a real iPhone or iPad, not the Simulator |
+| `verify` with a live key, Android | Play Integrity: a build installed from Google Play, on a device with Google Play services |
 
 iOS 13 and Android API 23 were checked on 24 September 2026 and are not supported. iOS 13: the
 arm64 simulator slice needs iOS 14.0, and the SDK has not run on iOS 13. Android API 23 fails because
@@ -34,6 +37,7 @@ the core's network callback needs API 24, and JNA 5.19.1 fails to load on API 23
 | Android | Device: Pixel 8a, Android 15 (Firebase Test Lab) | Against a live cell: the sample's full flow through `claim()`, accepted (7 October 2026) |
 | Android | Device, low-end | Not run yet |
 | Both | An end-to-end session against a live cell, through `claim()` | Run on both platforms: the rows above |
+| Both | `verify`: a test key with `zktls-demo`, and a live key | Not run yet on a device |
 
 ## Measured (build 0.1.0)
 

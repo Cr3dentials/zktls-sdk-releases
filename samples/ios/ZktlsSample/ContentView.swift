@@ -1,9 +1,14 @@
 import SwiftUI
 import UIKit
-import ZktlsSDK
+// The tree run below is the lab's: a partner's app calls `Zktls.verify`.
+@_spi(ZktlsLab) import ZktlsSDK
 
 /// The partner sample app, and the acceptance harness on iOS. It uses only the public package
 /// surface: if this file ever needs `@testable import`, the SDK API is wrong.
+///
+/// A partner's whole integration is `verifyDemo`: `Zktls.configure` once (ZktlsSampleApp), then
+/// `Zktls.verify` per user. Below it are the proof flow and, behind the lab opt-in (`@_spi(ZktlsLab)`), one
+/// platform's pack on its own.
 struct ContentView: View {
     @State private var phase = "idle"
     @State private var percent: UInt8 = 0
@@ -17,6 +22,7 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 20) {
+            Button("Verify with zktls-demo") { Task { await verifyDemo() } }.disabled(running)
             ProgressView(value: Double(percent), total: 100)
                 .accessibilityLabel("Proof progress")
             Text(phase).font(.headline)
@@ -32,6 +38,21 @@ struct ContentView: View {
             }
         }
         .padding()
+    }
+
+    /// The partner's integration: one call, which shows the SDK's screens and returns how each platform ended.
+    private func verifyDemo() async {
+        running = true
+        defer { running = false }
+        do {
+            let outcome = try await Zktls.verify(["zktls-demo"], reference: "sample-\(Int(Date().timeIntervalSince1970))")
+            result = outcome.platforms.map { "\($0.platform): \($0.status)" + ($0.reason.map { " (\($0))" } ?? "") }
+                .joined(separator: "\n")
+        } catch SdkError.Refused(let code, _) {
+            result = "Not started: \(code)" // the SDK has told the user why, except for not_configured
+        } catch {
+            result = message(for: error)
+        }
     }
 
     private func run() async {
@@ -136,6 +157,8 @@ func message(for error: Error) -> String {
     case .InsufficientMemory: return "Your phone is short of memory. Close other apps, then try again."
     case .Transport: return "A network problem. Check your connection."
     case .Policy: return "This check is not available right now."
+    case .Refused(let code, _):
+        return code == "device_not_verified" ? "This device can't be verified." : "Verification isn't available right now."
     }
 }
 
@@ -193,7 +216,7 @@ struct TreeSettings {
     let platforms: [String]
     let trustBundleUrl: String
     let policyBundleUrl: String
-    let policyBundleDigest: String
+    let policyBundleKeys: [String]
 
     static func load() -> TreeSettings {
         func key(_ k: String) -> String { Bundle.main.object(forInfoDictionaryKey: k) as? String ?? "" }
@@ -209,7 +232,9 @@ struct TreeSettings {
                 .filter { !$0.isEmpty },
             trustBundleUrl: key("ZKTLS_TRUST_BUNDLE_URL"),
             policyBundleUrl: key("ZKTLS_POLICY_BUNDLE_URL"),
-            policyBundleDigest: key("ZKTLS_POLICY_BUNDLE_DIGEST"))
+            policyBundleKeys: key("ZKTLS_POLICY_BUNDLE_KEYS").split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty })
     }
 
     /// The trust bundle and the pinned policy bundle, which a pack that attests needs; "" when unset.
@@ -254,7 +279,7 @@ struct TreeSettings {
             platformId: platformId,
             // Read only for a pack that attests.
             trustBundleJson: bundles.trust, trustBundleUrl: trustBundleUrl, trustOperatorKey: trustOperatorKey,
-            policyBundleJson: bundles.policy, policyBundleDigest: policyBundleDigest,
+            policyBundleJson: bundles.policy, policyBundleKeys: policyBundleKeys,
             relyingPartyNonceHex: "", resultUrl: run.url, resultToken: run.token, paramsJson: run.params)
     }
 }

@@ -15,7 +15,8 @@ extension ProofReport: @unchecked Sendable {}      // a boolean, strings and int
 extension Claim: @unchecked Sendable {}            // strings, integers and `TypedOutput`s
 extension TypedOutput: @unchecked Sendable {}      // strings
 extension Phase: @unchecked Sendable {}            // cases with no associated values
-extension TreeRunConfig: @unchecked Sendable {}    // strings
+extension TreeRunConfig: @unchecked Sendable {}    // strings and a list of strings
+extension VerifyEnv: @unchecked Sendable {}        // strings and a list of strings
 extension TreeSummary: @unchecked Sendable {}      // a boolean, strings, integers, `TreeSource`s and a `Claim`
 extension TreeSource: @unchecked Sendable {}       // strings, integers, a boolean and a `SourceEvidence`
 extension SourceEvidence: @unchecked Sendable {}   // cases with no associated values
@@ -25,3 +26,7 @@ extension TreeFetchResponse: @unchecked Sendable {} // strings and an integer
 extension TreeSessionRequest: @unchecked Sendable {} // strings
 extension TreeScriptRequest: @unchecked Sendable {} // strings, an integer and `TreeScriptCookie`s
 extension TreeScriptCookie: @unchecked Sendable {}  // strings
+extension VerifyOutcome: @unchecked Sendable {}    // a string and `PlatformOutcome`s
+extension PlatformOutcome: @unchecked Sendable {}  // strings and a `PlatformStatus`
+extension PlatformStatus: @unchecked Sendable {}   // cases with no associated values
+extension VerifyRequest: @unchecked Sendable {}    // strings and a list of strings (internal: the facade's)

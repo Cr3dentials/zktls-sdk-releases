@@ -7,6 +7,11 @@ hands the run to that enclave once the user has signed in and the observed colle
 app may close ([a result from the attester](#a-result-from-the-attester)). This page is for the backend
 behind that URL: what arrives, and how to check it.
 
+With `verify`, that URL is our backend's, and your server gets our signed webhooks instead
+([your server: the webhooks](integration-ios.md#your-server-the-webhooks)). This page is for a lab run's
+result URL ([integration-packs.md](integration-packs.md)), and for checking the attester's claim a
+webhook carries, [below](#checking-a-result-typescript-node-22-or-later).
+
 ## What arrives
 
 One result per run. The SDK sends its `POST` once and never retries it; the attester's is the same

@@ -5,6 +5,107 @@ Every change a partner can notice, newest first. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release that changes the public API is at
 least a minor release, and one whose entry has a `### Breaking` section is a major release.
 
+## [2.0.0] - 2026-10-25
+
+A partner's app makes two calls, `Zktls.configure` once and `Zktls.verify` per user, and
+its server gets each platform's result from ours, in a signed webhook.
+
+### Breaking
+- `runTree` and the types only it takes or returns leave the partner API (Removed, below). An app that ran
+  platform packs with `runTree` calls `Zktls.verify` instead, and its server takes our webhooks instead of
+  creating runs: our Partner API no longer creates SDK runs (`POST /partner/browser-session` with
+  `"channel": "sdk"` answers 400 with the code `use_verify`).
+- `SdkError` (Swift) and `SdkException` (Kotlin) gain the case `Refused`: an exhaustive `switch` or `when`
+  over them needs it.
+
+### Added
+- `Zktls`, the SDK's facade. iOS: `Zktls.configure(appKey:theme:strings:)`, then
+  `Zktls.verify(_:reference:)` or `Zktls.verify(token:)`, `async throws` on the main actor. Android:
+  `Zktls.configure(appKey, theme, strings)`, then the `suspend` functions
+  `Zktls.verify(activity, platforms, reference)` or `Zktls.verify(activity, token)`. `configure` takes your
+  app's publishable key, `zk_live_…` or `zk_test_…`; `verify` takes our platform ids (1 to 10, each once,
+  run in that order) and your `reference` (1 to 128 of `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`), which comes
+  back unchanged in every webhook. It checks the device (a live key), starts a verification with our
+  backend, and runs each platform in its own sign-in page, handing each run to an attester that reads the
+  platform and posts the result to our backend. It returns a `VerifyOutcome` once the user leaves the flow:
+  its `verificationId` and, per platform, a `PlatformOutcome` with the `status` `done`, `failed` or
+  `notStarted` (Kotlin `DONE`, `FAILED`, `NOT_STARTED`) and, for a failure, a `reason`. Never the
+  platform's data: your server gets one signed `platform.finished` webhook per platform the user started,
+  and one `verification.finished` when every platform has ended. `verify(token:)` runs the platforms and
+  the reference your server set with `POST /partner/verification-tokens`. Our backend's address, the
+  bundles' URLs and the keys that check them are compiled into the SDK: your app passes no URL, and no key
+  but its own app key.
+  One verification runs at a time; cancelling the calling task or coroutine ends it.
+- Test keys. A `zk_test_` key skips the device check, so it works on the iOS Simulator and Android
+  emulators, and runs only the demo platform `zktls-demo` (any user name, the password `demo`). Its
+  webhooks carry `"test": true`.
+- Device attestation for live keys. iOS: Apple App Attest; the first live verification on an install
+  registers the install's key with our backend, and each start then carries an assertion over its request.
+  Android: Google Play Integrity's Standard API; each start carries a token bound to the SHA-256 of its
+  request. A device that cannot attest itself (a simulator or emulator, a phone without Google Play
+  services, a build that is not your registered app, an outage of Apple's or Google's service) gets the
+  refusal screen, and `verify` throws `Refused` with `device_not_verified`. The Android library depends on
+  `com.google.android.play:integrity`. What these send, and to whom, is in `docs/privacy.md`.
+- The SDK's own screens: an intro naming the platforms, a sign-in notice before each platform's page that
+  names the data its pack reads, a step between platforms, a notice when a platform could not be verified,
+  a finish screen, and a refusal screen. iOS shows them with UIKit, over the top-most view controller of
+  the key window; Android as dialogs over the activity you pass. `ZktlsTheme` sets their colours and logo,
+  and `strings` replaces any of their words by key (English built in; the same keys on both platforms).
+  The SDK holds background time on iOS, and runs its `shortService` on Android, during each hand-off, and
+  while it reports how the platforms ended (up to 10 s): your app adds no lifecycle code for `verify`.
+- `SdkError.Refused(code, message)`, Kotlin `SdkException.Refused` with `code` and `message`: `verify` did
+  not start, and the SDK has shown its refusal screen. `code` is `app_key_invalid`, `device_not_verified`,
+  `attest_key_unknown`, `platforms_invalid`, `platform_unavailable`, `reference_invalid`, `token_invalid`,
+  `limit_reached` (an hourly limit, our request rate limit, or the limit on device checks for one app or
+  one network), `account_inactive` (your team's trial is used up, its subscription has lapsed, or it has not
+  accepted the terms; test-key verifications do not count against a trial), `request_invalid` (our backend
+  could not read the request) or `unavailable` (our backend could not start it, on our side). Or it is
+  `not_configured`, which shows no screen: `verify` ran before `configure`, or, on Android, a live key ran
+  in a build with no Play Integrity project number compiled in, which our release gate stops from
+  shipping.
+- `ConfinementPolicy.providerName()` and `dataCategories()`: what a host's sign-in notice names, the site
+  the page signs in to (the signed pack's `provider.name`, else the platform's name) and the data the pack
+  reads; `packName()`, the platform's name.
+
+### Changed
+- An attested run's policy bundle is pinned by key, not by digest. The SDK accepts a policy bundle signed
+  with a key it pins, the attester's own policy keys, and refuses one older than a version it has accepted
+  under the same key while the app runs: `Policy("policy bundle: not signed with one of
+  policy_bundle_keys")` and `Policy("policy bundle: version N is older than version M already seen")`. So a
+  new version of the policy bundle needs no new app. Proof mode keeps its digest:
+  `SessionConfig.policyBundleDigest` is unchanged.
+- A declined sign-in notice ends the run as `Cancelled`, as closing the page does, and posts nothing.
+  Before, it failed the run, and a failed result was posted. In `verify`, it ends that platform and every
+  later one as not started; a lab `runTree` throws `Cancelled`. A `TreeHost` of your own reports a decline
+  by failing `begin` with exactly "the user declined".
+- The SDK's HTTP client on Android: a POST follows no redirect, so a 3xx is its answer and a body and its
+  token go only where they were sent; a GET follows at most 5 redirects, each only to https, and drops
+  `Authorization` on a redirect to another origin. Neither uses a cache, and neither sends a cookie unless
+  your app installs a default `CookieHandler`, which `HttpURLConnection` uses for every request,
+  `verify`'s calls to our backend and its bundle fetches included. On iOS likewise: a POST sends no cookie
+  and follows no redirect, and a GET follows a redirect only to https and drops `Authorization` on one to
+  another origin.
+- `PlatformHttp.postBytes` returns the reply's body, an error's included: `verify` reads our backend's
+  answers and refusals from it. An app that installs its own `PlatformHttp` must return it. `getBytes` also
+  carries `verify`'s GETs, with `Accept` only.
+- Two refusals read differently: a GET to a URL that is not https is `Policy("GET URL must be https://")`,
+  where it read `base_url must be https://`, and a header a GET may not carry is `Policy("header <name>
+  may not go to the GET URL")`, where it read `… may not go to the pack URL`.
+- The Android library brings `kotlinx-coroutines-android` at runtime: the SDK's WebView runs on
+  `Dispatchers.Main`, whatever scope `verify` is called from. An app whose own code uses it, such as
+  `MainScope()`, still declares it: a runtime dependency is not on your compile classpath.
+- The integration guides, the checklist, and the privacy and store-review notes describe `configure` and
+  `verify`. `docs/integration-packs.md` is now for pack authors, with the lab opt-in.
+
+### Removed
+- From the partner API, behind the SDK's lab opt-in (`@_spi(ZktlsLab) import ZktlsSDK` in Swift,
+  `@OptIn(ZktlsLabApi::class)` or `@ZktlsLabApi` in Kotlin), for pack authors and our device lab:
+  `runTree` (with `ZktlsClient.runTree`), `TreeRunConfig`, `TreeHost`, `TreeWebViewHost`,
+  `TreeDisclosure`, `TreeSummary`, `TreeSource` and `SourceEvidence`. `VerifyEnv`, new, is there too: only
+  the lab's `Zktls.configure(appKey:environment:)` takes it, to run `verify` against another environment.
+  The lab API may change in any release. In the lab, `TreeRunConfig.policyBundleKeys` (Ed25519 public
+  keys, 64 lowercase hex characters each) replaces `policyBundleDigest`.
+
 ## [1.0.0] - 2026-10-21
 
 The first public release.

@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>ZKTLS_APP_KEY</key>
+	<string>$(ZKTLS_APP_KEY)</string>
 	<key>ZKTLS_BASE_URL</key>
 	<string>$(ZKTLS_BASE_URL)</string>
 	<key>ZKTLS_APP_CREDENTIAL</key>
@@ -22,6 +24,8 @@
 	<string>$(ZKTLS_POLICY_BUNDLE_URL)</string>
 	<key>ZKTLS_POLICY_BUNDLE_DIGEST</key>
 	<string>$(ZKTLS_POLICY_BUNDLE_DIGEST)</string>
+	<key>ZKTLS_POLICY_BUNDLE_KEYS</key>
+	<string>$(ZKTLS_POLICY_BUNDLE_KEYS)</string>
 	<key>ZKTLS_RUNS_URL</key>
 	<string>$(ZKTLS_RUNS_URL)</string>
 	<key>ZKTLS_PLATFORMS</key>

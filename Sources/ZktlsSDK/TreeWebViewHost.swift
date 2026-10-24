@@ -3,9 +3,10 @@ import UIKit
 import WebKit
 import os
 
-/// What the user is told before `runTree` opens a platform's pages, and the two answers. The SDK ships
-/// no wording for it yet: pass the text your review approved. Nothing opens until the user accepts.
-public struct TreeDisclosure: Sendable {
+/// What the user is told before `runTree` opens a platform's pages, and the two answers. Pass the text your
+/// review approved: the host shows it as given. (`Zktls.verify` shows its own, naming the site the page signs
+/// in to and the data it reads.) Nothing opens until the user accepts.
+@_spi(ZktlsLab) public struct TreeDisclosure: Sendable {
     /// The dialog's title.
     public let title: String
     /// What the run reads and what leaves the device.
@@ -123,7 +124,7 @@ func jsLiteral(_ value: Any) -> String {
 /// Session values stay out of this class. The page applies them when it fetches; `cookies` and
 /// `sessionMaterial` hand them to the Rust core in one call each, for the attested read, which seals
 /// them at once. None is stored in a property, written to disk or logged.
-public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WKUIDelegate, UIAdaptivePresentationControllerDelegate,
+@_spi(ZktlsLab) public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WKUIDelegate, UIAdaptivePresentationControllerDelegate,
     @unchecked Sendable
 {
     /// Blocks every http load, so mixed content never loads.
@@ -133,7 +134,9 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
     static let noGeolocation = "(function(){var d=function(s,e){if(e)e({code:1,message:'denied',PERMISSION_DENIED:1});};var w=function(s,e){d(s,e);return 0;};try{Object.defineProperty(navigator,'geolocation',{value:{getCurrentPosition:d,watchPosition:w,clearWatch:function(){}},configurable:false});}catch(_){}try{var p=Geolocation.prototype;Object.defineProperty(p,'getCurrentPosition',{value:d,writable:false,configurable:false});Object.defineProperty(p,'watchPosition',{value:w,writable:false,configurable:false});}catch(_){}})();"
 
     private let presenter: UIViewController
-    private let disclosure: TreeDisclosure
+    /// The sign-in notice, made at `begin` from the name of the site the page signs in to and the data
+    /// categories the pack reads.
+    private let notice: (_ platform: String, _ categories: [String]) -> TreeDisclosure
     private let bridge: String
     private(set) var webView: WKWebView?
     private var shown: (view: UIViewController, from: UIViewController)?
@@ -162,6 +165,8 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
     private var closed = false
     /// What every host call throws once the run's page is closed: the core ends the run on it, as Cancelled.
     static let pageClosed = "the page closed"
+    /// What `begin` throws when the user declined the sign-in notice: the core ends the run on it, as Cancelled.
+    static let userDeclined = "the user declined"
     /// Bridge messages dropped this run: from another origin or frame, of no known kind, or answering no
     /// pending request.
     private(set) var dropped = 0
@@ -194,12 +199,24 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
         $0.evaluateJavaScript($1, completionHandler: $2)
     }
 
-    /// A host that shows `disclosure` first and the platform's pages only on accept.
+    /// A host that shows `disclosure` first, as given, and the platform's pages only on accept.
     public init(presentingFrom: UIViewController, disclosure: TreeDisclosure) {
         self.presenter = presentingFrom
-        self.disclosure = disclosure
+        self.notice = { _, _ in disclosure }
         self.bridge = treeBridgeSource()
         super.init()
+    }
+
+    /// `verify`'s host: the notice `notice` makes from the pack, answered by `ask`.
+    init(
+        presentingFrom: UIViewController, notice: @escaping (_ platform: String, _ categories: [String]) -> TreeDisclosure,
+        ask: @escaping (TreeDisclosure) async -> Bool
+    ) {
+        self.presenter = presentingFrom
+        self.notice = notice
+        self.bridge = treeBridgeSource()
+        super.init()
+        self.ask = ask
     }
 
     // MARK: TreeHost
@@ -209,13 +226,21 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
     public func begin(loginUrl: String, neverRecord: [String], policy: ConfinementPolicy) async throws -> String {
         let domains = policy.bridgeDomains()
         guard let target = URL(string: loginUrl), !bridge.isEmpty else { throw failed("the bridge did not load") }
-        let accepted = await (ask ?? showDisclosure)(disclosure)
-        guard accepted else { throw failed("the user declined") }
-        guard let noHttp = await Self.noHttp() else { throw failed("the http block did not compile") }
         try await onMain {
             // A new run: the last one's refusal or close, if any, ended with it.
             self.refusal = nil
             self.closed = false
+        }
+        // The site, as the signed pack names its provider (else the platform's name); a policy without one (the
+        // hosts' test hook) names the sign-in page's host.
+        let site = policy.providerName()
+        let shown = notice(site.isEmpty ? policy.displayHost(url: loginUrl) : site, policy.dataCategories())
+        let accepted = await (ask ?? showDisclosure)(shown)
+        guard accepted else { throw failed(Self.userDeclined) }
+        guard let noHttp = await Self.noHttp() else { throw failed("the http block did not compile") }
+        try await onMain {
+            // Closed while the notice was up (the verification was given up): no page opens.
+            if self.closed { throw self.failed(Self.pageClosed) }
             self.dropped = 0
             self.committedUrl = ""
             self.responseUrl = nil
@@ -226,6 +251,10 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
             cfg.websiteDataStore = .nonPersistent()
             cfg.preferences.javaScriptCanOpenWindowsAutomatically = false
             cfg.preferences.isFraudulentWebsiteWarningEnabled = true
+            // Mobile Safari's application name, its version this device's iOS major version as Safari's is: X answers
+            // a WKWebView that does not name Safari with a redirect to x-safari-https:, which the policy refuses.
+            let ios = UIDevice.current.systemVersion.split(separator: ".").first.map(String.init) ?? "18"
+            cfg.applicationNameForUserAgent = "Version/\(ios).0 Mobile/15E148 Safari/604.1"
             cfg.userContentController.add(noHttp)
             cfg.userContentController.add(WeakMessages(self), name: "zktls")
             let web = WKWebView(frame: .zero, configuration: cfg)
@@ -411,9 +440,12 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// Closes the WebView. Called once, whatever the run's result.
+    /// Closes the WebView, and returns once the page has gone, so a screen can follow it. Called once,
+    /// whatever the run's result.
     public func finish() async {
-        await MainActor.run { self.close() }
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self.close { done.resume() } } }
+        }
     }
 
     // MARK: Bridge messages
@@ -706,7 +738,8 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
         top.present(view, animated: true)
     }
 
-    private func close() {
+    /// Closes the run's page; `then` runs once it has gone.
+    @MainActor private func close(then: @escaping () -> Void = {}) {
         closed = true
         if webView != nil { os_log("tree run closed; dropped bridge messages: %ld", dropped) }
         urlWatch = nil
@@ -720,7 +753,11 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
         loaded(failed(Self.pageClosed))
         for (_, cont) in replies { cont.resume(returning: ["status": 0, "error": Self.pageClosed]) }
         replies = [:]
-        if let (view, from) = shown, from.presentedViewController === view { from.dismiss(animated: true) }
+        if let (view, from) = shown, from.presentedViewController === view {
+            dismissPresented(by: from, then: then)
+        } else {
+            then()
+        }
         shown = nil
         page = nil
     }
@@ -749,7 +786,9 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
         decisionHandler(.cancel)
     }
 
-    /// No downloads: a reply WebKit cannot show is not loaded.
+    /// No downloads: a main-frame reply WebKit cannot show is not loaded. A sub-frame's reply is, whatever
+    /// its type: a sign-in check that answers its frame with an empty body and no content type (Upwork's) would
+    /// otherwise never finish, and the page waiting on it never renders. A frame starts no download.
     public func webView(
         _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
@@ -757,7 +796,7 @@ public final class TreeWebViewHost: NSObject, TreeHost, WKNavigationDelegate, WK
         if navigationResponse.isForMainFrame {
             responseUrl = navigationResponse.canShowMIMEType ? navigationResponse.response.url?.absoluteString : nil
         }
-        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .cancel)
+        decisionHandler(navigationResponse.canShowMIMEType || !navigationResponse.isForMainFrame ? .allow : .cancel)
     }
 
     /// A new document: its URL is what the checks read, the reply's own where WebKit asked about one (a

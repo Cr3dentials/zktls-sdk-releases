@@ -10,7 +10,9 @@ import ai.zktls.sdk.TreeWebViewHost
 import ai.zktls.sdk.WebViewLoginPresenter
 import ai.zktls.sdk.ZkTlsLifecycle
 import ai.zktls.sdk.ZkTlsSessionService
+import ai.zktls.sdk.Zktls
 import ai.zktls.sdk.ZktlsClient
+import ai.zktls.sdk.ZktlsLabApi
 import ai.zktls.sdk.ZktlsLoginPresenter
 import android.app.Activity
 import android.content.Context
@@ -40,10 +42,14 @@ import org.json.JSONObject
  * The partner sample app, and the acceptance harness on Android. It uses only the public SDK surface:
  * `:sdk` in zktls-sdk, `xyz.cr3dentials:zktls-sdk` from Maven Central in the releases repository.
  *
+ * A partner's whole integration is [verify]: `Zktls.configure` once, then `Zktls.verify` per user. Below it
+ * are the proof flow and, behind the lab opt-in (`ZktlsLabApi`), one platform's pack on its own.
+ *
  * What is NOT here: a retry. A failure before the freeze ends that session; the user taps again.
  */
 class MainActivity : Activity() {
     private val scope = MainScope()
+    private lateinit var verifyDemo: Button
     private var flow: SampleFlow? = null
     private var next: Result<SampleFlow>? = null
     private lateinit var status: TextView
@@ -56,6 +62,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         status = TextView(this).apply { text = "idle" }
+        // Your test key, in verify.json (samples/android/README.md); a partner's app passes its own at launch.
+        runCatching { JSONObject(File(getExternalFilesDir(null), "verify.json").readText()).getString("app_key") }
+            .onSuccess { Zktls.configure(appKey = it) }
+        verifyDemo = Button(this).apply { text = "Verify with zktls-demo"; setOnClickListener { verify() } }
         bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             contentDescription = "Proof progress"
@@ -68,7 +78,7 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(48, 48, 48, 48)
-            listOf(bar, status, prove, platform, runPack, cancel).forEach(::addView)
+            listOf(verifyDemo, bar, status, prove, platform, runPack, cancel).forEach(::addView)
         }
         // targetSdk 36 draws edge to edge from Android 15: pad the root by the system bars, on top
         // of the existing 48px margin, so nothing sits under the status bar or the gesture bar.
@@ -102,6 +112,20 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         scope.cancel()
         super.onDestroy()
+    }
+
+    /** The partner's integration: one call, which shows the SDK's screens and returns how each platform ended. */
+    private fun verify() = scope.launch {
+        verifyDemo.isEnabled = false
+        status.text = try {
+            val outcome = Zktls.verify(this@MainActivity, listOf("zktls-demo"), reference = "sample-${System.currentTimeMillis()}")
+            outcome.platforms.joinToString("\n") { "${it.platform}: ${it.status}" + (it.reason?.let { r -> " ($r)" } ?: "") }
+        } catch (e: SdkException.Refused) {
+            "Not started: ${e.code}" // the SDK has told the user why, except for not_configured
+        } catch (e: SdkException) {
+            message(e)
+        }
+        verifyDemo.isEnabled = true
     }
 
     private fun start() {
@@ -149,8 +173,10 @@ class MainActivity : Activity() {
     /**
      * A platform's pack, the user present: the SDK shows the disclosure, opens the platform's sign-in page
      * and collects in the page. The data reaches our backend at the result URL: the SDK posts it, or for a
-     * pack that attests, the attester does once it has taken the run. The app gets a summary only.
+     * pack that attests, the attester does once it has taken the run. The app gets a summary only. One
+     * platform's pack on its own is the lab's (`ZktlsLabApi`): a partner's app calls `Zktls.verify`.
      */
+    @OptIn(ZktlsLabApi::class)
     private fun runTree() {
         val settings = runCatching { TreeSettings.load(this) }.getOrElse {
             status.text = "No tree settings: ${it.message} (see samples/android/README.md)"
@@ -210,6 +236,7 @@ class MainActivity : Activity() {
  * Your disclosure, in your words and approved for your app (docs/privacy.md): the SDK shows it before the
  * platform's pages open, and opens nothing if the user declines.
  */
+@OptIn(ZktlsLabApi::class)
 fun disclosure(platformId: String) = TreeDisclosure(
     title = "Connect your account",
     message = "The app opens $platformId's own sign-in page. You sign in there yourself; the app never sees " +
@@ -219,6 +246,7 @@ fun disclosure(platformId: String) = TreeDisclosure(
 )
 
 /** What the app learns from a run: how it ended and each source's counts, never the data. */
+@OptIn(ZktlsLabApi::class)
 fun describe(s: TreeSummary): String = buildString {
     append(if (s.succeeded) "Collected" else "Not collected: ${s.error}")
     s.sources.forEach { append("\n${it.storeAs}: ${it.rows} rows, ${it.pages} pages") }
@@ -245,6 +273,8 @@ fun message(e: Throwable): String {
         is SdkException.InsufficientMemory -> "Your phone is short of memory. Close other apps, then try again."
         is SdkException.Transport -> "A network problem. Check your connection."
         is SdkException.Policy -> "This check is not available right now."
+        is SdkException.Refused ->
+            if (e.code == "device_not_verified") "This device can't be verified." else "Verification isn't available right now."
     }
 }
 
@@ -289,7 +319,7 @@ class TreeSettings(
     val networkKey: String,
     val trustBundleJson: String,
     val policyBundleJson: String,
-    val policyBundleDigest: String,
+    val policyBundleKeys: List<String>,
     val trustBundleUrl: String = "",
 ) {
     /**
@@ -315,13 +345,14 @@ class TreeSettings(
         }
     }
 
+    @OptIn(ZktlsLabApi::class)
     fun config(platformId: String, run: Triple<String, String, String>) = TreeRunConfig(
         baseUrl = baseUrl, appCredential = appCredential, userIdHash = userIdHash,
         idempotencyKey = UUID.randomUUID().toString(), clientRegion = clientRegion, networkKey = networkKey,
         platformId = platformId,
         // Read only for a pack that attests.
         trustBundleJson = trustBundleJson, trustBundleUrl = trustBundleUrl, trustOperatorKey = trustOperatorKey,
-        policyBundleJson = policyBundleJson, policyBundleDigest = policyBundleDigest,
+        policyBundleJson = policyBundleJson, policyBundleKeys = policyBundleKeys,
         relyingPartyNonceHex = "", resultUrl = run.first, resultToken = run.second, paramsJson = run.third,
     )
 
@@ -332,6 +363,7 @@ class TreeSettings(
 
         fun parse(j: JSONObject): TreeSettings {
             val p = j.getJSONArray("platforms")
+            val k = j.optJSONArray("policy_bundle_keys")
             return TreeSettings(
                 baseUrl = j.getString("base_url"),
                 appCredential = j.getString("app_credential"),
@@ -341,10 +373,10 @@ class TreeSettings(
                 userIdHash = j.optString("user_id_hash", "sample"),
                 clientRegion = j.optString("client_region"),
                 networkKey = j.optString("network_key", "sample"),
-                // A pack that attests needs the trust bundle and the pinned policy bundle, as session.json has them.
+                // A pack that attests needs the trust and policy bundles, as session.json has them, and the policy keys.
                 trustBundleJson = j.optString("trust_bundle_json"),
                 policyBundleJson = j.optString("policy_bundle_json"),
-                policyBundleDigest = j.optString("policy_bundle_digest"),
+                policyBundleKeys = if (k == null) emptyList() else List(k.length()) { k.getString(it) },
                 trustBundleUrl = j.optString("trust_bundle_url"),
             )
         }

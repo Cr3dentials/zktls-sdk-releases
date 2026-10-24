@@ -1,12 +1,27 @@
-# Store review: the login WebView and its cookies
+# Store review: the sign-in pages and their cookies
 
-Your app shows a bank's (or another institution's) own sign-in page, and the zkTLS SDK reads that
-page's sign-in cookies. Reviewers ask about this, so this page gives you the facts and the words.
+Your app shows each platform's own sign-in page, and the zkTLS SDK reads the platform with the user's
+session (in proof mode, an institution's sign-in cookies). Reviewers ask about this, so this page gives
+you the facts and the words.
 
 ## What the user sees
 
-Before the sign-in page opens, the SDK's default presenter shows this, with the institution's domains
-filled in:
+`verify` shows its own screens: an intro naming the platforms, with **Start** and **Not now**, and,
+before each platform's page opens, a sign-in notice naming the site the page signs in to, as the
+platform's signed pack names it, and the categories of data its pack reads:
+
+> **Sign in to {platform}**
+>
+> {platform} opens its own sign-in page. Data read: {categories}.
+>
+> [Cancel] [Continue]
+
+Cancel (on Android also Back, or a tap outside the notice) opens nothing and reads nothing, and ends the
+flow. You may translate the screens' words with `strings` ([iOS](integration-ios.md#theme-and-strings));
+keep every fact the notice states.
+
+In proof mode, before the sign-in page opens, the SDK's default presenter shows this, with the
+institution's domains filled in:
 
 > **Sign in to bank.example**
 >
@@ -24,6 +39,11 @@ before it presents the page.
 
 ## What is read, and what is not
 
+With `verify`, the platform's page runs the SDK's bridge and the pack's script, which read only the
+platform's own endpoints the signed pack names, with the user's session, and the cookies it declares
+([what confines our script](privacy.md#what-confines-our-script)). The attester then reads the platform's
+summary itself. In proof mode:
+
 - **Only the cookies of the domains the signed profile declares**, and only after the user has
   signed in on the institution's own page. The SDK filters them twice, in Swift or Kotlin and again
   in its Rust core.
@@ -40,7 +60,7 @@ before it presents the page.
 
 *Reviewed by Cr3dentials on 21 October 2026. Counsel's review is pending.*
 
-In a capture (`login`, then `capture`):
+In proof mode's capture (`login`, then `capture`):
 
 1. From the platform's cookie store into the SDK's Rust core in one call. They are held in an
    opaque handle your app cannot read, and never logged.
@@ -55,7 +75,8 @@ In a capture (`login`, then `capture`):
    releasing the client lets go of them (on Android the memory is wiped when the garbage collector
    frees it).
 
-In a platform pack that attests (`runTree`, [integration-packs.md](integration-packs.md#a-pack-that-attests-detached)):
+With `verify`, whose platforms all attest (and a pack that attests in the lab,
+[integration-packs.md](integration-packs.md#a-pack-that-attests-detached)):
 
 1. When the pack's steps have succeeded, the SDK takes the session the attested request needs from
    the page, closes it, and seals that session into one upload.
@@ -70,8 +91,8 @@ In a platform pack that attests (`runTree`, [integration-packs.md](integration-p
 
 ## The sign-in screen
 
-When your app runs a platform pack (`runTree`, [integration-packs.md](integration-packs.md)), the SDK
-shows the platform's page in a screen of its own:
+For each platform `verify` runs (and a platform pack in the lab, [integration-packs.md](integration-packs.md)),
+the SDK shows the platform's page in a screen of its own:
 
 - **The host bar.** A thin bar above the page shows a padlock, the host of the page the user is on
   (never its path), and a Close button. The host follows every page the user reaches, so they can
@@ -84,8 +105,8 @@ shows the platform's page in a screen of its own:
   - **Android:** the SDK's WebView window is marked `FLAG_SECURE`, so screenshots, screen recordings
     and the recent-apps thumbnail come out black. The page's JavaScript alerts, confirmations and
     prompts are never shown, on either platform: each is answered at once (a confirmation as no).
-    Not covered: the date and select pickers the WebView opens, and the disclosure shown before the
-    run, which holds only the fixed text your app passes.
+    Not covered: the date and select pickers the WebView opens, and the SDK's screens around the page,
+    which hold only the platforms' names, the data categories and your strings.
   - **iOS** cannot block screenshots. While the screen is recorded or mirrored, and whenever your app
     stops being active (so before iOS takes the app-switcher snapshot), the SDK covers the page with a
     plain view that reads "The sign-in is hidden while the screen is recorded."
@@ -108,6 +129,22 @@ shows the platform's page in a screen of its own:
 
 Paste into App Store Connect → App Review Information → Notes, filling in the brackets:
 
+> This app uses the zkTLS SDK to let the user verify [what, e.g. "their freelance earnings"] from their
+> own [platform] account. When the user taps [button], the SDK shows a short intro, then a notice naming
+> the data it reads, then opens [platform]'s own sign-in page in an in-app browser. The user signs in on
+> that page; the app never sees or stores their password. The SDK then hands the signed-in session to a
+> zkTLS enclave, which reads [the figures] from [platform] once and signs them. The result goes to the
+> zkTLS service, which sends it to our server; the app never receives it.
+>
+> Network: the SDK makes HTTPS requests to the zkTLS service, opens the platform's own pages in the
+> in-app browser, and opens one TLS 1.3 connection to the zkTLS enclave the service assigns to each
+> platform's run. It uses App Attest to show that requests come from this app. It uses no VPN, packet
+> tunnel, or background network entitlement.
+>
+> Demo account: [credentials for a test account on each platform].
+
+In proof mode, paste this instead:
+
 > This app uses the zkTLS SDK to let the user prove [the fact, e.g. "a completed transfer"] from
 > their own [institution] account. When the user taps [button], the app first shows a disclosure,
 > then opens [institution]'s own sign-in page in an in-app browser. The user signs in on that page;
@@ -121,25 +158,20 @@ Paste into App Store Connect → App Review Information → Notes, filling in th
 > assigns to each session; and a TLS 1.3 connection to the verifier it assigns to the session. It
 > uses no VPN, packet tunnel, or background network entitlement.
 >
-> [For a platform pack that attests, replace the paragraph above with: the SDK opens the platform's
-> own pages in an in-app browser, then one TLS 1.3 connection to the zkTLS enclave the front door at
-> [your base_url host] assigns to the run, which reads the platform's summary with the user's session
-> and posts the result to [your backend's host]. It uses no VPN, packet tunnel, or background network
-> entitlement.]
->
 > Demo account: [credentials for a test account at the institution, or the review build's test profile].
 
-Give the reviewer a working demo account. A login the reviewer cannot complete is the most likely
-rejection.
+Give the reviewer a working demo account for each platform. A sign-in the reviewer cannot complete is
+the most likely rejection.
 
 ## What this answers
 
 **Apple.**
 - Guideline 5.1.1, Data Collection and Storage: consent is given before access, and only what the
   feature needs is read.
-- 5.1.2, Data Use and Sharing: the cookie serves one request the user asked for and is not shared.
-- 5.2.2, Third-Party Sites/Services: you must be permitted, under the institution's terms, to
-  access the account on the user's behalf. That is yours to confirm with the institution.
+- 5.1.2, Data Use and Sharing: the session serves the one read the user asked for (in proof mode, the
+  cookie serves one request) and is not shared.
+- 5.2.2, Third-Party Sites/Services: you must be permitted, under each platform's terms, to
+  access the account on the user's behalf. That is yours to confirm with the platform.
 
 **Google Play.** The User Data policy's "Prominent Disclosure and Consent": the disclosure is in the
 app, appears before access, names the data and its use, and needs an affirmative tap. Declining

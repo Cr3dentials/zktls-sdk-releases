@@ -120,7 +120,7 @@ public actor ZktlsClient {
     /// the attester and returns when it accepts it (`Detached`, `handedOff`): the app may close, and the
     /// attester reads the endpoint, signs the claim and posts the result. Returns a summary; the data
     /// goes to your backend, never to the app.
-    public func runTree(config: TreeRunConfig, host: TreeHost) async throws -> TreeSummary {
+    @_spi(ZktlsLab) public func runTree(config: TreeRunConfig, host: TreeHost) async throws -> TreeSummary {
         try await cancellable { try await ZktlsSDK.runTree(cfg: config, host: host, session: session) }
     }
 
@@ -169,22 +169,29 @@ private final class CallbackSink: ProgressSink, @unchecked Sendable {
     func onProgress(phase: Phase, percent: UInt8) { body(phase, percent) }
 }
 
-/// Allocate, the cell probe, `runTree`'s pack and its result over `URLSession`, so they inherit the
-/// system's proxy, VPN and captive-portal handling. A failure is status 0 or 0 ms,
-/// which the Rust core reads as unreachable.
+/// Allocate, the cell probe, `runTree`'s pack and its result, and `Zktls.verify`'s calls to our backend and
+/// its bundles, over `URLSession`, so they inherit the system's proxy, VPN and captive-portal handling. A
+/// failure is status 0 or 0 ms, which the Rust core reads as unreachable. A post sends no cookie and follows
+/// no redirect: a 3xx is its answer. A GET follows one only to https (`BoundedGet`).
 final class URLSessionPlatformHttp: PlatformHttp, @unchecked Sendable {
     static let shared = URLSessionPlatformHttp(session: .shared)
     private let session: URLSession
+    /// `session`'s configuration, with a delegate that follows no redirect: the posts' session.
+    private let posts: URLSession
 
-    init(session: URLSession) { self.session = session }
+    init(session: URLSession) {
+        self.session = session
+        self.posts = URLSession(configuration: session.configuration, delegate: NoRedirect(), delegateQueue: nil)
+    }
 
     func postJson(url: String, body: Data) async -> PlatformResponse {
         guard let u = URL(string: url) else { return PlatformResponse(status: 0, body: Data()) }
         var req = URLRequest(url: u)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpShouldHandleCookies = false
         req.httpBody = body
-        guard let (data, resp) = await send(req), let http = resp as? HTTPURLResponse else {
+        guard let (data, resp) = await send(req, on: posts), let http = resp as? HTTPURLResponse else {
             return PlatformResponse(status: 0, body: Data())
         }
         return PlatformResponse(status: UInt16(clamping: http.statusCode), body: data)
@@ -196,8 +203,9 @@ final class URLSessionPlatformHttp: PlatformHttp, @unchecked Sendable {
         req.httpMethod = "POST"
         // Exactly the headers given: the core sends the result's type and encoding and the run's token.
         for h in headers { req.setValue(h.value, forHTTPHeaderField: h.name) }
+        req.httpShouldHandleCookies = false
         req.httpBody = body
-        guard let (data, resp) = await send(req), let http = resp as? HTTPURLResponse else {
+        guard let (data, resp) = await send(req, on: posts), let http = resp as? HTTPURLResponse else {
             return PlatformResponse(status: 0, body: Data())
         }
         return PlatformResponse(status: UInt16(clamping: http.statusCode), body: data)
@@ -239,13 +247,13 @@ final class URLSessionPlatformHttp: PlatformHttp, @unchecked Sendable {
         return max(1, UInt32(Date().timeIntervalSince(t0) * 1000))
     }
 
-    /// A data task as one async call: URLSession's own async `data(for:)` is iOS 15, and the
-    /// floor is 14. A transport failure, or a cancel of the calling Task, is nil.
-    private func send(_ req: URLRequest) async -> (Data, URLResponse)? {
+    /// A data task on `on` (this client's session unless given) as one async call: URLSession's own async
+    /// `data(for:)` is iOS 15, and the floor is 14. A transport failure, or a cancel of the calling Task, is nil.
+    private func send(_ req: URLRequest, on: URLSession? = nil) async -> (Data, URLResponse)? {
         let task = Locked<URLSessionDataTask?>(nil)
         return await withTaskCancellationHandler {
             await withCheckedContinuation { cont in
-                let t = session.dataTask(with: req) { data, resp, _ in
+                let t = (on ?? session).dataTask(with: req) { data, resp, _ in
                     cont.resume(returning: data.flatMap { d in resp.map { (d, $0) } })
                 }
                 task.value = t
@@ -259,9 +267,24 @@ final class URLSessionPlatformHttp: PlatformHttp, @unchecked Sendable {
     }
 }
 
+/// The posts' redirects: none is followed, so a body and its token go only where they were sent.
+final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+/// `url`'s origin, `scheme://host:port`, the port its scheme's default when it names none.
+func origin(_ url: URL?) -> String? {
+    guard let url, let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else { return nil }
+    return "\(scheme)://\(host):\(url.port ?? (scheme == "https" ? 443 : 80))"
+}
+
 /// One `getBytes` read to at most `maxBytes` of its body as URLSession hands it over, decoded: a declared
 /// length over the cap, or a body that grows past it, cancels the task, and the call answers 413 with no
-/// body. A redirect to a URL that is not https is not followed: the call answers the redirect itself.
+/// body. A redirect to a URL that is not https is not followed: the call answers the redirect itself. One
+/// to another origin goes without `Authorization`, which was given for the first origin alone.
 /// A transport failure, or a cancel, is status 0.
 final class BoundedGet: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let maxBytes: UInt64
@@ -297,7 +320,12 @@ final class BoundedGet: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        completionHandler(request.url?.scheme?.lowercased() == "https" ? request : nil)
+        guard request.url?.scheme?.lowercased() == "https" else { return completionHandler(nil) }
+        var next = request
+        if origin(response.url) == nil || origin(response.url) != origin(request.url) {
+            next.setValue(nil, forHTTPHeaderField: "Authorization")
+        }
+        completionHandler(next)
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
