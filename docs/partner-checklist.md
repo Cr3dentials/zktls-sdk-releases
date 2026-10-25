@@ -23,7 +23,7 @@ Work down this page from first contact to production. Each line links the page t
 ## 3. Install
 
 - [ ] iOS: Swift Package Manager or CocoaPods; Android: Maven Central ([README](../README.md)). No token is needed.
-- [ ] Pin a version (`from: "2.0.0"`, `~> 2.0`, `2.0.0`). Read the [changelog](../CHANGELOG.md) before every upgrade.
+- [ ] Pin a version (`from: "2.0.1"`, `~> 2.0`, `2.0.1`). Read the [changelog](../CHANGELOG.md) before every upgrade.
 
 ## 4. Integrate
 

@@ -33,7 +33,7 @@ No account or token is needed to install.
 `https://github.com/Cr3dentials/zktls-sdk-releases`, and add the product `ZktlsSDK`. In a `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/Cr3dentials/zktls-sdk-releases", from: "2.0.0"),
+.package(url: "https://github.com/Cr3dentials/zktls-sdk-releases", from: "2.0.1"),
 // and in your target's dependencies:
 .product(name: "ZktlsSDK", package: "zktls-sdk-releases"),
 ```
@@ -55,7 +55,7 @@ end
 
 ```kotlin
 dependencies {
-    implementation("xyz.cr3dentials:zktls-sdk:2.0.0")
+    implementation("xyz.cr3dentials:zktls-sdk:2.0.1")
 }
 ```
 

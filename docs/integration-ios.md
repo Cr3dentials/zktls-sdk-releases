@@ -16,7 +16,7 @@ key works on the Simulator.
 
 ## Install
 
-Swift Package Manager or CocoaPods, as in the [README](../README.md): `from: "2.0.0"`, or `~> 2.0`. The
+Swift Package Manager or CocoaPods, as in the [README](../README.md): `from: "2.0.1"`, or `~> 2.0`. The
 package brings its privacy manifest ([privacy.md](privacy.md)). It needs no `Info.plist` key, and no
 entitlement for TestFlight and App Store builds: App Attest works from the bundle ID and Team ID you
 registered with us. Your App Store Connect export answer is in [export-compliance.md](export-compliance.md).

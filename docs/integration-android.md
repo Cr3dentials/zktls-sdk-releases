@@ -21,7 +21,7 @@ key works on an emulator.
 
 ```kotlin
 dependencies {
-    implementation("xyz.cr3dentials:zktls-sdk:2.0.0")                  // from mavenCentral()
+    implementation("xyz.cr3dentials:zktls-sdk:2.0.1")                  // from mavenCentral()
     // Only if nothing else brings it to your code (androidx.lifecycle's lifecycleScope does) and your code
     // uses it, such as MainScope() (proof mode, below): the SDK's is a runtime dependency only.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")

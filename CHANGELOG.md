@@ -5,6 +5,13 @@ Every change a partner can notice, newest first. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release that changes the public API is at
 least a minor release, and one whose entry has a `### Breaking` section is a major release.
 
+## [2.0.1] - 2026-10-25
+
+### Fixed
+- iOS, Swift Package Manager: the package bundles the WebView bridge, so `verify` opens each platform's sign-in
+  page. With 2.0.0 every platform failed at once with "The browser could not start: the bridge did not load"
+  (lab `runTree` in 1.0.0 too). CocoaPods and Android were not affected.
+
 ## [2.0.0] - 2026-10-25
 
 A partner's app makes two calls, `Zktls.configure` once and `Zktls.verify` per user, and
