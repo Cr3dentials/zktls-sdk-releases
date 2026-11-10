@@ -231,56 +231,86 @@ func jsLiteral(_ value: Any) -> String {
             self.refusal = nil
             self.closed = false
         }
+        guard let noHttp = await Self.noHttp() else { throw failed("the http block did not compile") }
+        // The WebView is made before the notice, so WebKit's processes start while the user reads it. Nothing
+        // loads until the user accepts; a decline or a close drops it.
+        try await onMain { self.webView = self.makeWebView(blocking: noHttp) }
         // The site, as the signed pack names its provider (else the platform's name); a policy without one (the
         // hosts' test hook) names the sign-in page's host.
         let site = policy.providerName()
         let shown = notice(site.isEmpty ? policy.displayHost(url: loginUrl) : site, policy.dataCategories())
-        // The http block compiles while the notice is up, so the tap does not wait for it.
-        async let compiled = Self.noHttp()
         let accepted = await (ask ?? showDisclosure)(shown)
-        guard accepted else { throw failed(Self.userDeclined) }
-        guard let noHttp = await compiled else { throw failed("the http block did not compile") }
+        guard accepted else {
+            try await onMain { self.webView = nil }
+            throw failed(Self.userDeclined)
+        }
         try await onMain {
             // Closed while the notice was up (the verification was given up): no page opens.
-            if self.closed { throw self.failed(Self.pageClosed) }
+            guard !self.closed, let web = self.webView else { throw self.failed(Self.pageClosed) }
             self.dropped = 0
             self.committedUrl = ""
             self.responseUrl = nil
             self.policy = policy
             self.neverRecord = neverRecord
             self.domains = domains
-            let cfg = WKWebViewConfiguration()
-            cfg.websiteDataStore = .nonPersistent()
-            cfg.preferences.javaScriptCanOpenWindowsAutomatically = false
-            cfg.preferences.isFraudulentWebsiteWarningEnabled = true
-            // Mobile Safari's application name, its version this device's iOS major version as Safari's is: X answers
-            // a WKWebView that does not name Safari with a redirect to x-safari-https:, which the policy refuses.
-            let ios = UIDevice.current.systemVersion.split(separator: ".").first.map(String.init) ?? "18"
-            cfg.applicationNameForUserAgent = "Version/\(ios).0 Mobile/15E148 Safari/604.1"
-            cfg.userContentController.add(noHttp)
-            cfg.userContentController.add(WeakMessages(self), name: "zktls")
-            let web = WKWebView(frame: .zero, configuration: cfg)
-            // Safari's Web Inspector for the app's debug builds only.
-            #if DEBUG
-            if #available(iOS 16.4, *) { web.isInspectable = true }
-            #endif
             web.navigationDelegate = self
             web.uiDelegate = self
-            web.allowsLinkPreview = false // a preview loads the link outside the policy
             // The page's moves within its document (pushState, a fragment): with no load in flight,
             // WebKit's URL is the committed document's.
             self.urlWatch = web.observe(\.url) { [weak self] web, _ in
                 MainActor.assumeIsolated { self?.followSameDocument(web) }
             }
-            self.webView = web
             self.installScripts()
-            let page = TreePageController(web: web) { [weak self] in self?.close() }
-            self.page = page
+            self.page = TreePageController(web: web) { [weak self] in self?.close() }
+        }
+        // The load starts now. The page is shown once the notice has gone (verify's answers at the tap, while
+        // it is still going), as UIKit requires of a presentation.
+        async let loading: Void = load(URLRequest(url: target), timeoutMs: 30_000)
+        await settled()
+        try await onMain {
+            guard !self.closed, let page = self.page else { throw self.failed(Self.pageClosed) }
             self.show(page)
             page.presentationController?.delegate = self
         }
-        try await load(URLRequest(url: target), timeoutMs: 30_000)
+        try await loading
         return "ephemeral"
+    }
+
+    /// A WebView for one run: a non-persistent data store of its own, the http block and the bridge's channel.
+    @MainActor private func makeWebView(blocking noHttp: WKContentRuleList) -> WKWebView {
+        let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .nonPersistent()
+        cfg.preferences.javaScriptCanOpenWindowsAutomatically = false
+        cfg.preferences.isFraudulentWebsiteWarningEnabled = true
+        // Mobile Safari's application name, its version this device's iOS major version as Safari's is: X answers
+        // a WKWebView that does not name Safari with a redirect to x-safari-https:, which the policy refuses.
+        let ios = UIDevice.current.systemVersion.split(separator: ".").first.map(String.init) ?? "18"
+        cfg.applicationNameForUserAgent = "Version/\(ios).0 Mobile/15E148 Safari/604.1"
+        cfg.userContentController.add(noHttp)
+        cfg.userContentController.add(WeakMessages(self), name: "zktls")
+        let web = WKWebView(frame: .zero, configuration: cfg)
+        // Safari's Web Inspector for the app's debug builds only.
+        #if DEBUG
+        if #available(iOS 16.4, *) { web.isInspectable = true }
+        #endif
+        web.allowsLinkPreview = false // a preview loads the link outside the policy
+        return web
+    }
+
+    /// Waits while something over the presenter is being dismissed (the notice, when it answered at the tap):
+    /// UIKit refuses a presentation during a dismissal. At most 2 s, as `dismissPresented` waits.
+    @MainActor private func settled() async {
+        let end = Date().addingTimeInterval(2)
+        while Date() < end, dismissing() { try? await Task.sleep(nanoseconds: 16_000_000) }
+    }
+
+    @MainActor private func dismissing() -> Bool {
+        var top = presenter
+        while let next = top.presentedViewController {
+            if next.isBeingDismissed { return true }
+            top = next
+        }
+        return false
     }
 
     /// Loads `url` and waits for it, at most `timeoutMs`.

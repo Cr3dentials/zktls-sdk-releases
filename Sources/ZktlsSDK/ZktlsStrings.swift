@@ -8,6 +8,9 @@ struct VerifyScreen: Equatable {
     let accept: String
     let decline: String?
     var list: [String] = []
+    /// Its accept answers at the tap, while the screen is still going: the sign-in notice, whose page loads
+    /// meanwhile. Every other answer waits for the screen to go, so the next one can be shown.
+    var answersOnTap = false
 }
 
 /// The words on the SDK's screens: English built in, and each key replaced by the `strings` passed to
@@ -118,6 +121,6 @@ struct ZktlsStrings {
         let filled = Self.fillIn(body, ["platform": platform, "categories": categories.joined(separator: ", ")])
         return VerifyScreen(
             title: fill("disclosure.title", ["platform": platform]), body: filled.isEmpty ? nil : filled,
-            accept: self["disclosure.accept"], decline: self["disclosure.decline"])
+            accept: self["disclosure.accept"], decline: self["disclosure.decline"], answersOnTap: true)
     }
 }

@@ -326,6 +326,11 @@ final class ScreenController: UIViewController, Shown {
         guard let r = reply else { return }
         reply = nil
         guard let from, from.presentedViewController === self else { return r(self, a) }
+        if a, screen.answersOnTap {
+            // The page behind the notice loads meanwhile; its presentation waits for this dismissal itself.
+            r(self, a)
+            return dismissPresented(by: from) {}
+        }
         dismissPresented(by: from) { r(self, a) }
     }
 }

@@ -72,7 +72,8 @@ final class IOSVerifyHost: VerifyHost, @unchecked Sendable {
                 return TreeDisclosure(title: s.title, message: s.body ?? "", accept: s.accept, decline: s.decline ?? "")
             },
             { d in
-                await screens.ask(VerifyScreen(title: d.title, body: d.message.isEmpty ? nil : d.message, accept: d.accept, decline: d.decline))
+                await screens.ask(VerifyScreen(
+                    title: d.title, body: d.message.isEmpty ? nil : d.message, accept: d.accept, decline: d.decline, answersOnTap: true))
             })
         page.value = p
         return p

@@ -5,6 +5,13 @@ Every change a partner can notice, newest first. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release that changes the public API is at
 least a minor release, and one whose entry has a `### Breaking` section is a major release.
 
+## [2.1.1] - 2026-11-10
+
+### Changed
+- iOS: the in-app browser starts WebKit while the sign-in notice is up rather than after the tap, and in
+  `verify` the sign-in page starts loading the moment the user taps Continue, while the notice is still
+  fading out. Nothing loads before the tap; the page opens sooner.
+
 ## [2.1.0] - 2026-11-10
 
 ### Changed
