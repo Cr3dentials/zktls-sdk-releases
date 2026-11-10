@@ -235,9 +235,11 @@ func jsLiteral(_ value: Any) -> String {
         // hosts' test hook) names the sign-in page's host.
         let site = policy.providerName()
         let shown = notice(site.isEmpty ? policy.displayHost(url: loginUrl) : site, policy.dataCategories())
+        // The http block compiles while the notice is up, so the tap does not wait for it.
+        async let compiled = Self.noHttp()
         let accepted = await (ask ?? showDisclosure)(shown)
         guard accepted else { throw failed(Self.userDeclined) }
-        guard let noHttp = await Self.noHttp() else { throw failed("the http block did not compile") }
+        guard let noHttp = await compiled else { throw failed("the http block did not compile") }
         try await onMain {
             // Closed while the notice was up (the verification was given up): no page opens.
             if self.closed { throw self.failed(Self.pageClosed) }

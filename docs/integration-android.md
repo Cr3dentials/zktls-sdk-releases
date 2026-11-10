@@ -21,7 +21,7 @@ key works on an emulator.
 
 ```kotlin
 dependencies {
-    implementation("xyz.cr3dentials:zktls-sdk:2.0.1")                  // from mavenCentral()
+    implementation("xyz.cr3dentials:zktls-sdk:2.1.0")                  // from mavenCentral()
     // Only if nothing else brings it to your code (androidx.lifecycle's lifecycleScope does) and your code
     // uses it, such as MainScope() (proof mode, below): the SDK's is a runtime dependency only.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
@@ -132,7 +132,7 @@ val fromServer = Zktls.verify(this@VerifyActivity, token)   // token: "vt_…", 
 On an emulator or a phone, with your test key: call `verify(activity, listOf("zktls-demo"), reference)`,
 tap **Start**, then **Continue**, and sign in to the demo bank with any user name and the password `demo`.
 `verify` returns with `zktls-demo` as `PlatformStatus.DONE`, and your server receives a `platform.finished`
-with `"test": true`, then a `verification.finished`, as on iOS
+with `"test": true`, and a `verification.finished`, in either order, as on iOS
 ([test with `zktls-demo`](integration-ios.md#test-with-zktls-demo)). The webhooks, and how your server
 checks their signature, are in [your server: the webhooks](integration-ios.md#your-server-the-webhooks).
 

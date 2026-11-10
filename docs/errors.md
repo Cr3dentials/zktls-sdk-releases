@@ -136,6 +136,8 @@ text, `case .Policy(let text)` in Swift and `e.v1` in Kotlin (not `e.message`, w
 | `profile <id>: request policy (<rule>): <reason>` / `the profile's request template: <reason>` | The profile's request template is one the capture enclave refuses, or does not encode | Contact us |
 | `the login yielded no cookies` | The sign-in finished without a cookie for the profile's domains | The user signs in again |
 | `a cookie holds a byte a header line cannot carry` | A cookie from the sign-in holds a control character or a non-ASCII byte, which a request header cannot carry | Report it |
+| `the value of <slot> is empty` / `the value of <slot> holds a byte a header line cannot carry` | A header value the app gave for one of the profile's slots is empty, or holds a control character or a non-ASCII byte | Your values |
+| `a value was given for header <name>, which the request has no slot for or the login fills` | The app gave a value for a header the profile's request has no slot for, or one the sign-in fills itself | Your values |
 | `invalid capture config: <reason>` / `malformed response` | The capture could not be set up, or the institution's reply is not what the profile expects | Report it |
 | `verifier not pinned by the trust bundle: <member> at <address>: <reason>` | The verifier's key is not one your trust bundle lists: your copy is older than the verifier's current key | Refetch the trust bundle, then start a new session |
 | `proof: <reason>` | The prover refused to build the proof from this capture and the pinned policy; nothing was sent | Report it |

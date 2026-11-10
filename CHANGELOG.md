@@ -5,6 +5,27 @@ Every change a partner can notice, newest first. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release that changes the public API is at
 least a minor release, and one whose entry has a `### Breaking` section is a major release.
 
+## [2.1.0] - 2026-11-10
+
+### Changed
+- iOS: the in-app browser's http block compiles while the platform's sign-in notice is up, not after the
+  user's tap, so the sign-in page opens sooner.
+- `verify` fetches what a platform's run needs while the screen before the run is up: the trust and policy
+  bundles (side by side, no longer one after the other) and the first platform's pack behind the intro, and
+  each later platform's pack behind the screen before it. The platform's sign-in notice now follows the
+  user's tap at once, where it took 2 to 4 seconds on a mobile network. A user who stops at a screen stops
+  its fetches; nothing they fetched is used.
+
+### Security
+- A platform's sign-in and account-security pages (its pack's `never_record`) are recognised however their
+  address is written: in another case, percent-encoded, or with doubled slashes. A variant used to let the
+  pack's script run there, a cookie be read and the page's requests be recorded.
+- A request the in-page bridge sends with the user's session values (a token from the page's storage, a
+  captured request's headers, a cookie) follows no redirect off the page's origin. A followed redirect keeps
+  those headers, so they reached the next host before its reply was refused. Such a redirect now fails the
+  request, as an off-domain landing already did.
+- An upload refused for its size is wiped before it is dropped.
+
 ## [2.0.1] - 2026-10-25
 
 ### Fixed

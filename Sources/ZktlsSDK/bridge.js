@@ -109,9 +109,24 @@
     return i < 0 ? url : url.slice(0, i);
   }
 
+  // The form never_record is matched in, as zktls_tree::confine::record_form makes it: each %XX of an
+  // ASCII byte decoded, ASCII upper case lowered, a backslash read as a slash, and each run of slashes
+  // one. Many servers serve /Account/Login, /account/%6Cogin and /account//login alike; matched as
+  // written, those variants were recorded.
+  function recordForm(s) {
+    return String(s)
+      .replace(/%([0-7][0-9a-fA-F])/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); })
+      .replace(/[A-Z]/g, function (c) { return c.toLowerCase(); })
+      .replace(/\\/g, '/')
+      .replace(/\/{2,}/g, '/');
+  }
+
+  var neverRecordForms = neverRecord.map(recordForm);
+
   function forbidden(url) {
-    for (var i = 0; i < neverRecord.length; i++) {
-      if (url.indexOf(neverRecord[i]) >= 0) return true;
+    var u = recordForm(url);
+    for (var i = 0; i < neverRecordForms.length; i++) {
+      if (u.indexOf(neverRecordForms[i]) >= 0) return true;
     }
     return false;
   }
@@ -325,9 +340,26 @@
   // Where a fetch landed after its redirects must be on the pack's domains, over https, and not a
   // never_record address; otherwise its reply is not read.
   function landedOff(res, target) {
+    if (res.type === 'opaqueredirect' || (res.status >= 300 && res.status < 400 && res.status !== 304)) {
+      return 'redirect_refused: a redirect from ' + target.hostname + ' with session values';
+    }
     var landed = res.url ? new URL(res.url) : target;
     if (landed.protocol !== 'https:' || !onDomains(landed.hostname) || forbidden(landed.href)) return 'redirect_refused: ' + landed.hostname;
     return '';
+  }
+
+  // How a request that carries session values (a header from the page's storage, a captured request
+  // or a cookie, or any header a script sets) may be redirected. A followed redirect keeps every header
+  // but Authorization, so the values reached the next host, whoever it was, before landedOff refused its
+  // reply. On the page's own origin, mode same-origin follows a redirect only within it: a hop off it
+  // is an error before it is requested. Elsewhere none is followed, and its 3xx is refused.
+  function sessionRedirect(init, target) {
+    if (target.origin === window.location.origin) {
+      init.mode = 'same-origin';
+    } else {
+      init.redirect = 'manual';
+    }
+    return init;
   }
 
   // One call's api: the bridge's page fetch and session material, held to the pack's domains, and
@@ -441,15 +473,18 @@
     run.fetches += 1;
     var controller = typeof AbortController === 'function' ? new AbortController() : null;
     var timer = controller ? setTimeout(function () { controller.abort(); }, opts.timeoutMs || 30000) : null;
+    var init = {
+      method: opts.method || 'GET',
+      credentials: opts.credentials || 'include',
+      redirect: 'follow',
+      headers: headers,
+      body: opts.body === null || opts.body === undefined ? undefined : opts.body,
+      signal: controller ? controller.signal : undefined,
+    };
+    // A script's own headers can hold what api handed it, so any header counts as a session value.
+    if (Object.keys(headers).length) sessionRedirect(init, target);
     return pageFetchImpl
-      .call(window, target.href, {
-        method: opts.method || 'GET',
-        credentials: opts.credentials || 'include',
-        redirect: 'follow',
-        headers: headers,
-        body: opts.body === null || opts.body === undefined ? undefined : opts.body,
-        signal: controller ? controller.signal : undefined,
-      })
+      .call(window, target.href, init)
       .then(
         function (res) {
           var refused = landedOff(res, target);
@@ -630,15 +665,18 @@
         }
         var controller = typeof AbortController === 'function' ? new AbortController() : null;
         var timer = controller ? setTimeout(function () { controller.abort(); }, request.timeout_ms || 15000) : null;
+        var init = {
+          method: request.method || 'GET',
+          credentials: 'include',
+          redirect: 'follow',
+          headers: headers,
+          body: request.body === null ? undefined : request.body,
+          signal: controller ? controller.signal : undefined,
+        };
+        // The pack's own literal headers are no session value; the page's are.
+        if (request.from_captured || request.bearer_cookie || request.storage_header) sessionRedirect(init, new URL(url));
         pageFetchImpl
-          .call(window, url, {
-            method: request.method || 'GET',
-            credentials: 'include',
-            redirect: 'follow',
-            headers: headers,
-            body: request.body === null ? undefined : request.body,
-            signal: controller ? controller.signal : undefined,
-          })
+          .call(window, url, init)
           .then(function (res) {
             var refused = landedOff(res, new URL(url));
             if (refused) {

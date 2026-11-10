@@ -16,7 +16,7 @@ key works on the Simulator.
 
 ## Install
 
-Swift Package Manager or CocoaPods, as in the [README](../README.md): `from: "2.0.1"`, or `~> 2.0`. The
+Swift Package Manager or CocoaPods, as in the [README](../README.md): `from: "2.1.0"`, or `~> 2.0`. The
 package brings its privacy manifest ([privacy.md](privacy.md)). It needs no `Info.plist` key, and no
 entitlement for TestFlight and App Store builds: App Attest works from the bundle ID and Team ID you
 registered with us. Your App Store Connect export answer is in [export-compliance.md](export-compliance.md).
@@ -143,7 +143,7 @@ let outcome = try await Zktls.verify(token: token)      // token: "vt_…", from
 4. The SDK hands the run to an attester and shows **All done**. `verify` returns with `zktls-demo` as
    `.done`.
 5. Within seconds your server receives a `platform.finished` with `"test": true` and the demo bank's
-   latest transfer, then a `verification.finished`. Both carry your reference.
+   latest transfer, and a `verification.finished`, in either order. Both carry your reference.
 
 `verify` throws `not_configured` when `Zktls.configure` has not run. With a test key,
 `platform_unavailable` means a platform other than `zktls-demo`.
