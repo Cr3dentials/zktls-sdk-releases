@@ -139,6 +139,8 @@ func jsLiteral(_ value: Any) -> String {
     private let notice: (_ platform: String, _ categories: [String]) -> TreeDisclosure
     private let bridge: String
     private(set) var webView: WKWebView?
+    /// The WebView `prepare` is making, which `begin` takes.
+    private(set) var prepared: Task<WKWebView?, Never>?
     private var shown: (view: UIViewController, from: UIViewController)?
     private var policy: ConfinementPolicy?
     private var neverRecord: [String] = []
@@ -231,10 +233,19 @@ func jsLiteral(_ value: Any) -> String {
             self.refusal = nil
             self.closed = false
         }
-        guard let noHttp = await Self.noHttp() else { throw failed("the http block did not compile") }
-        // The WebView is made before the notice, so WebKit's processes start while the user reads it. Nothing
-        // loads until the user accepts; a decline or a close drops it.
-        try await onMain { self.webView = self.makeWebView(blocking: noHttp) }
+        // The WebView is made before the notice, so WebKit's processes start while the user reads it, or by
+        // `prepare` while verify's consent screen was up. Nothing loads until the user accepts; a decline or a
+        // close drops it.
+        let prepared = await MainActor.run { () -> Task<WKWebView?, Never>? in
+            defer { self.prepared = nil }
+            return self.prepared
+        }
+        if let web = await prepared?.value {
+            try await onMain { self.webView = web }
+        } else {
+            guard let noHttp = await Self.noHttp() else { throw failed("the http block did not compile") }
+            try await onMain { self.webView = self.makeWebView(blocking: noHttp) }
+        }
         // The site, as the signed pack names its provider (else the platform's name); a policy without one (the
         // hosts' test hook) names the sign-in page's host.
         let site = policy.providerName()
@@ -274,6 +285,16 @@ func jsLiteral(_ value: Any) -> String {
         }
         try await loading
         return "ephemeral"
+    }
+
+    /// Gets the page ready while verify's consent screen is up: the http block compiles and WebKit's processes
+    /// start, so the page opens sooner once the user agrees. Nothing loads; `begin` takes the WebView, and a
+    /// host never begun drops it.
+    @MainActor func prepare() {
+        prepared = Task { @MainActor in
+            guard let noHttp = await Self.noHttp() else { return nil }
+            return self.makeWebView(blocking: noHttp)
+        }
     }
 
     /// A WebView for one run: a non-persistent data store of its own, the http block and the bridge's channel.
@@ -773,6 +794,9 @@ func jsLiteral(_ value: Any) -> String {
     /// Closes the run's page; `then` runs once it has gone.
     @MainActor private func close(then: @escaping () -> Void = {}) {
         closed = true
+        // A WebView made for a run that never began goes here, on the main thread.
+        prepared?.cancel()
+        prepared = nil
         if webView != nil { os_log("tree run closed; dropped bridge messages: %ld", dropped) }
         urlWatch = nil
         probes.forEach(release)

@@ -8,49 +8,92 @@ struct VerifyScreen: Equatable {
     let accept: String
     let decline: String?
     var list: [String] = []
-    /// Its accept answers at the tap, while the screen is still going: the sign-in notice, whose page loads
-    /// meanwhile. Every other answer waits for the screen to go, so the next one can be shown.
-    var answersOnTap = false
+}
+
+/// The platform list, as words: its title and the line under it, one row per platform offered, the privacy line
+/// under the rows, the button that ends the verification and what it says once tapped (`working`), and the footer.
+struct PlatformList: Equatable {
+    /// A platform: its name, its state, the words for it (`status`, nil while not run yet), and the line under its
+    /// name (`detail`, only for one to try again).
+    struct Row: Equatable {
+        let name: String
+        let state: PlatformRowState
+        let status: String?
+        var detail: String? = nil
+        /// Whether the user may tap it: not run yet, backed out of, or to try again.
+        var available: Bool { state == .available || state == .retry }
+    }
+
+    let title: String
+    let subtitle: String
+    let rows: [Row]
+    let privacy: String
+    let done: String
+    let footer: String
+    let working: String
+}
+
+/// A platform's consent screen: its `name`, as on the list, our backend's text, the second checkbox's `agree` line,
+/// whose `links` (each a label in it and its `https://` address) open in the browser, the heading over the bullets
+/// (`itemsTitle`), `close`, which declines it, and `working`, on the button once it is accepted, while the
+/// platform's page opens and, after it, while the run is handed off.
+struct ConsentScreen: Equatable {
+    struct Link: Equatable {
+        let label: String
+        let url: String
+    }
+
+    let name: String
+    let consent: Consent
+    let agree: String
+    let links: [Link]
+    let itemsTitle: String
+    let close: String
+    let working: String
 }
 
 /// The words on the SDK's screens: English built in, and each key replaced by the `strings` passed to
 /// `Zktls.configure`; a key the SDK does not use is ignored. The keys and the English are the same on Android.
-/// Words in braces are filled in when a screen is made, in one pass, so a platform's name that holds braces
-/// is shown as it is.
+/// Words in braces are filled in when a screen is made, in one pass, so a value that holds braces is shown as
+/// it is.
 struct ZktlsStrings {
     /// Every key the screens use, with its English, in the order the integration guides list them.
     static let english: [(String, String)] = [
-        ("intro.title", "Verify your accounts"),
-        ("intro.body", "You'll sign in to each one on its own page. Only the result is shared."),
-        ("intro.start", "Start"),
-        ("intro.cancel", "Not now"),
-        ("next.title", "{done} done"),
-        ("next.body", "Next: {next}"),
-        ("next.continue", "Continue"),
-        ("next.stop", "Stop here"),
-        ("failed.title", "{platform} couldn't be verified"),
-        ("failed.continue", "Continue"),
-        ("finish.title", "All done"),
-        ("finish.partial", "Finished {done} of {count}"),
-        ("finish.close", "Close"),
+        ("list.title", "Choose an account to verify"),
+        ("list.subtitle", "Verify one or more, in any order."),
+        ("list.verified", "Verified"),
+        ("list.failed", "Couldn't be verified"),
+        ("list.retry", "Try again"),
+        ("list.retryDetail", "Couldn't connect. Nothing was shared."),
+        ("list.privacy", "You sign in on your own phone. Your passwords and statements stay with you; only the facts needed are shared with this app."),
+        ("list.done", "Done"),
+        ("list.footer", "Powered by Cr3dentials"),
+        ("consent.agree", "I agree to the {terms} and {privacy}."),
+        ("consent.terms", "Terms of Service"),
+        ("consent.privacy", "Privacy Policy"),
+        ("consent.itemsTitle", "What we'll verify"),
+        ("consent.close", "Cancel"),
+        ("consent.working", "Finishing up…"),
         ("refusal.device", "This device can't be verified"),
         ("refusal.other", "Verification isn't available right now"),
         ("refusal.close", "Close"),
-        ("disclosure.title", "Sign in to {platform}"),
-        ("disclosure.body", "{platform} opens its own sign-in page. Data read: {categories}."),
-        ("disclosure.accept", "Continue"),
-        ("disclosure.decline", "Cancel"),
     ]
 
     private static let placeholder = try! NSRegularExpression(pattern: "\\{([a-z]+)\\}")
-    /// A sentence of a string's text, with the stop that ends it (Latin or CJK) and the spaces after.
-    private static let sentence = try! NSRegularExpression(pattern: "[^.!?。！？]+(?:[.!?。！？]+\\s*|$)")
 
     private let words: [String: String]
 
     init(_ overrides: [String: String] = [:]) {
         var words = Dictionary(uniqueKeysWithValues: Self.english)
-        for (key, text) in overrides where words[key] != nil { words[key] = text }
+        // A blank value, or one that drops a word in braces its English has (the consent screen's {terms} and
+        // {privacy} are its links), is ignored: the English stands.
+        for (key, text) in overrides {
+            guard let english = words[key], !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let kept = Self.placeholder.matches(in: english, range: NSRange(english.startIndex..., in: english))
+                .compactMap { Range($0.range, in: english).map { String(english[$0]) } }
+                .allSatisfy(text.contains)
+            if kept { words[key] = text }
+        }
         self.words = words
     }
 
@@ -72,38 +115,39 @@ struct ZktlsStrings {
         return out + text[last...]
     }
 
-    /// `text` without its sentences that hold `placeholder`: a sentence ends at its stop and the spaces after it.
-    private static func withoutSentence(_ text: String, _ placeholder: String) -> String {
-        sentence.matches(in: text, range: NSRange(text.startIndex..., in: text))
-            .compactMap { Range($0.range, in: text).map { String(text[$0]) } }
-            .filter { !$0.contains(placeholder) }
-            .joined()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The platform list: each row with the words for how it ended, or for trying again, and the line under it for
+    /// one to try again.
+    func list(_ rows: [PlatformRow]) -> PlatformList {
+        PlatformList(
+            title: self["list.title"],
+            subtitle: self["list.subtitle"],
+            rows: rows.map { row in
+                let status: String?
+                switch row.state {
+                case .available: status = nil
+                case .verified: status = self["list.verified"]
+                case .failed: status = self["list.failed"]
+                case .retry: status = self["list.retry"]
+                }
+                return PlatformList.Row(
+                    name: row.name, state: row.state, status: status, detail: row.state == .retry ? self["list.retryDetail"] : nil)
+            },
+            privacy: self["list.privacy"],
+            done: self["list.done"],
+            footer: self["list.footer"],
+            working: self["consent.working"])
     }
 
-    /// The intro, naming the platforms in order: Start, or Not now.
-    func intro(_ names: [String]) -> VerifyScreen {
-        VerifyScreen(title: self["intro.title"], body: self["intro.body"], accept: self["intro.start"], decline: self["intro.cancel"], list: names)
-    }
-
-    /// Between platforms, after `finished` was done: Continue to `next`, or Stop here.
-    func next(finished: String, next: String) -> VerifyScreen {
-        VerifyScreen(
-            title: fill("next.title", ["done": finished]), body: fill("next.body", ["next": next]),
-            accept: self["next.continue"], decline: self["next.stop"])
-    }
-
-    /// `platform` could not be verified: Continue.
-    func failed(_ platform: String) -> VerifyScreen {
-        VerifyScreen(title: fill("failed.title", ["platform": platform]), body: nil, accept: self["failed.continue"], decline: nil)
-    }
-
-    /// The finish: all done, or how many of the platforms were.
-    func finish(_ outcome: VerifyOutcome) -> VerifyScreen {
-        let done = outcome.platforms.filter { $0.status == .done }.count
-        let count = outcome.platforms.count
-        let title = done == count ? self["finish.title"] : fill("finish.partial", ["done": "\(done)", "count": "\(count)"])
-        return VerifyScreen(title: title, body: nil, accept: self["finish.close"], decline: nil)
+    /// The consent screen of the platform `name`d: `consent`, our backend's text, with the second checkbox's line,
+    /// whose Terms of Service and Privacy Policy link to its `termsUrl` and `privacyUrl`, the heading over its
+    /// bullets, and the close button.
+    func consent(name: String, _ consent: Consent) -> ConsentScreen {
+        let terms = self["consent.terms"]
+        let privacy = self["consent.privacy"]
+        return ConsentScreen(
+            name: name, consent: consent, agree: fill("consent.agree", ["terms": terms, "privacy": privacy]),
+            links: [ConsentScreen.Link(label: terms, url: consent.termsUrl), ConsentScreen.Link(label: privacy, url: consent.privacyUrl)],
+            itemsTitle: self["consent.itemsTitle"], close: self["consent.close"], working: self["consent.working"])
     }
 
     /// The refusal: this device for `device_not_verified`, and for any other code that it isn't available now.
@@ -111,16 +155,5 @@ struct ZktlsStrings {
         VerifyScreen(
             title: self[code == deviceNotVerified ? "refusal.device" : "refusal.other"], body: nil,
             accept: self["refusal.close"], decline: nil)
-    }
-
-    /// The sign-in notice before a platform's page opens, naming `platform`, the site the page signs in to, and
-    /// the data the pack reads: Continue, or Cancel. A pack that names no category leaves out the body's
-    /// sentence that would list them.
-    func disclosure(platform: String, categories: [String]) -> VerifyScreen {
-        let body = categories.isEmpty ? Self.withoutSentence(self["disclosure.body"], "{categories}") : self["disclosure.body"]
-        let filled = Self.fillIn(body, ["platform": platform, "categories": categories.joined(separator: ", ")])
-        return VerifyScreen(
-            title: fill("disclosure.title", ["platform": platform]), body: filled.isEmpty ? nil : filled,
-            accept: self["disclosure.accept"], decline: self["disclosure.decline"], answersOnTap: true)
     }
 }

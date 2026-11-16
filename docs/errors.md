@@ -223,14 +223,18 @@ your backend's deadline for the run tells you if it never arrives
 ## How each platform ended in `verify`
 
 Once our backend has started a verification, `verify` returns a `VerifyOutcome` however its platforms
-end, never their data: each platform's result reaches your server from ours, in its own webhook.
+end, never their data: each platform's result reaches your server from ours, in its own webhook. It
+throws `Cancelled` instead when your app cancels it, or when its screens go away without the user's
+answer (on Android, the activity recreated, for example by a rotation; on iOS, your app dismissing them,
+or UIKit refusing to show them). Our backend then ends the platforms that did not finish within about 2
+hours, and your server's webhooks say how each ended.
 `PlatformOutcome.status` is:
 
 | `status` | Meaning |
 |---|---|
 | `Done` | The platform's run reached us: the attester took its read (or its result was delivered). Your server gets its `platform.finished` webhook when the result arrives |
-| `Failed` | The run failed; `reason` says why, and your server is told too. The next platform still runs: each counts on its own |
-| `NotStarted` | The run never ran: the user declined the intro, chose "Stop here" between platforms, or closed a platform's sign-in page or declined its sign-in notice, which ends that platform and every later one |
+| `Failed` | The run failed; `reason` says why, and your server is told too. The other platforms can still run: each counts on its own |
+| `NotStarted` | The run never ran: the user tapped Done without it, declined its consent screen, or closed its sign-in page |
 
 A platform the SDK handed to the attester is `Done`. If its result then never reaches us, our backend
 fails the run about 2 hours after the verification started, with the error code `no_result`, and your

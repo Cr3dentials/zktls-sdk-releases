@@ -33,7 +33,7 @@ No account or token is needed to install.
 `https://github.com/Cr3dentials/zktls-sdk-releases`, and add the product `ZktlsSDK`. In a `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/Cr3dentials/zktls-sdk-releases", from: "2.1.1"),
+.package(url: "https://github.com/Cr3dentials/zktls-sdk-releases", from: "2.2.0"),
 // and in your target's dependencies:
 .product(name: "ZktlsSDK", package: "zktls-sdk-releases"),
 ```
@@ -55,13 +55,13 @@ end
 
 ```kotlin
 dependencies {
-    implementation("xyz.cr3dentials:zktls-sdk:2.1.1")
+    implementation("xyz.cr3dentials:zktls-sdk:2.2.0")
 }
 ```
 
 ## Signatures
 
-The xcframework is signed with our Apple Distribution certificate, Team ID `R8287QD4F7`.
+The xcframework is signed with Cr3dentials' Apple Distribution certificate, Team ID `5RPDZZ37QL`.
 `codesign -dv ZktlsSDKFFI.xcframework` prints the `TeamIdentifier` to compare. The Android library's
 files on Maven Central are signed with our OpenPGP key, fingerprint
 `E8588B38D6FDCC59E6C03011AE4CC59A87AD0C0B`, on the public keyservers.

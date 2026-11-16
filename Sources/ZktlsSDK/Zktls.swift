@@ -96,8 +96,15 @@ public enum Zktls {
         let host = IOSVerifyHost(
             device: AppAttestHost(live: c.appKey.hasPrefix(liveKeyPrefix)),
             strings: c.strings,
-            screens: VerifyScreens(theme: c.theme),
-            pages: { notice, ask in TreeWebViewHost(presentingFrom: root, notice: notice, ask: ask) },
+            // A page lost with its stage (the app dismissed it, UIKit refused it) ends the verification as cancelled,
+            // never as Done.
+            screens: VerifyScreens(theme: c.theme, lost: { ZktlsSDK.cancel(session: session) }),
+            // The consent screen, just before, is the notice: the page asks nothing more before it opens.
+            pages: {
+                TreeWebViewHost(
+                    presentingFrom: root, notice: { _, _ in TreeDisclosure(title: "", message: "", accept: "", decline: "") },
+                    ask: { _ in true })
+            },
             background: lifecycle)
         do {
             let outcome = try await withTaskCancellationHandler {

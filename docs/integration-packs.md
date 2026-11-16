@@ -136,9 +136,8 @@ nothing.
 ### The lab's sign-in notice
 
 `TreeWebViewHost` shows the `TreeDisclosure` you pass, as given, before the platform's page opens: pass
-the text your review approved. (`verify` shows its own notice, from its `disclosure.*` strings, naming
-the site the page signs in to, the pack's `provider.name` or, when it has none, the platform's name, and
-the data its pack reads.) Declining it ends the run with `Cancelled`, as closing the page
+the text your review approved. (`verify` shows no notice here: its consent screen, before the page,
+lists the data the pack declares in `data_categories`.) Declining it ends the run with `Cancelled`, as closing the page
 does, and nothing is posted to the result URL; before 2.0.0, a decline failed the run and posted a failed
 result. A `TreeHost` of your own reports a decline by failing `begin` with exactly "the user declined",
 and, once the user has closed the page, fails every call but `finish` with exactly "the page closed".

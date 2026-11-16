@@ -21,7 +21,7 @@ key works on an emulator.
 
 ```kotlin
 dependencies {
-    implementation("xyz.cr3dentials:zktls-sdk:2.1.1")                  // from mavenCentral()
+    implementation("xyz.cr3dentials:zktls-sdk:2.2.0")                  // from mavenCentral()
     // Only if nothing else brings it to your code (androidx.lifecycle's lifecycleScope does) and your code
     // uses it, such as MainScope() (proof mode, below): the SDK's is a runtime dependency only.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
@@ -91,7 +91,7 @@ class VerifyActivity : ComponentActivity() {
                     when (platform.status) {
                         PlatformStatus.DONE -> {}        // the result is on its way to your server
                         PlatformStatus.FAILED -> {}      // platform.reason says why, for your logs
-                        PlatformStatus.NOT_STARTED -> {} // the user stopped: offer to finish later
+                        PlatformStatus.NOT_STARTED -> {} // the user did not run it: offer to finish later
                     }
                 }
             } catch (e: SdkException.Refused) {
@@ -130,8 +130,10 @@ val fromServer = Zktls.verify(this@VerifyActivity, token)   // token: "vt_…", 
 ## Test with `zktls-demo`
 
 On an emulator or a phone, with your test key: call `verify(activity, listOf("zktls-demo"), reference)`,
-tap **Start**, then **Continue**, and sign in to the demo bank with any user name and the password `demo`.
-`verify` returns with `zktls-demo` as `PlatformStatus.DONE`, and your server receives a `platform.finished`
+tap the demo bank on the list, check both boxes on its consent screen and tap **Continue to verification**,
+then sign in to the demo bank with any user name and the password `demo`. The list shows it **Verified**:
+tap **Done**. `verify` returns with `zktls-demo` as `PlatformStatus.DONE`, and your server receives a
+`platform.finished`
 with `"test": true`, and a `verification.finished`, in either order, as on iOS
 ([test with `zktls-demo`](integration-ios.md#test-with-zktls-demo)). The webhooks, and how your server
 checks their signature, are in [your server: the webhooks](integration-ios.md#your-server-the-webhooks).
@@ -150,25 +152,33 @@ Zktls.configure(
         logo = R.drawable.logo,
     ),
     strings = mapOf(
-        "intro.title" to getString(R.string.verify_intro_title),
-        "finish.title" to getString(R.string.verify_finish_title),
+        "list.title" to getString(R.string.verify_list_title),
+        "list.done" to getString(R.string.verify_done),
     ),
 )
 ```
 
 Colours are ARGB colour ints, such as `ContextCompat.getColor(this, R.color.brand)`, and `logo` is a
-drawable resource id. A `null`, or `ZktlsTheme()` with no arguments, keeps the SDK's own look. English
-ships built in; override any string by its key. The keys and their English are the same as on iOS
-([the table](integration-ios.md#theme-and-strings)). Words in braces are filled in by the SDK, so keep
-them in your text.
+drawable resource id. A `null`, or `ZktlsTheme()` with no arguments, keeps the SDK's own look. The platform
+list and the consent screens are in Cr3dentials' colours, with your theme's logo at the top; your colours
+apply to the refusal screen. English ships built in; override any string by its key. The keys and their
+English are the same as on iOS ([the table](integration-ios.md#theme-and-strings)). Words in braces are
+filled in by the SDK, so keep them in your text: a value that drops one, or is blank, is ignored for that
+key.
 
 ## Things to know
 
-- **The screens.** They are dialogs over the activity you pass. The SDK has no activity of its own, so
-  keep that activity in front until `verify` returns.
-- **Stopping.** **Not now** on the intro, **Stop here** between platforms, **Cancel**, Back or a tap
-  outside the sign-in notice, or closing a sign-in page or pressing Back on it, ends the flow. The
-  platform the user was on, and every later one, are not started.
+- **The screens.** They are full-screen dialogs over the activity you pass. The SDK has no activity of
+  its own, so keep that activity in front until `verify` returns.
+- **The flow.** The platform list shows the platforms you passed, one or more. The user runs the ones
+  they choose, in any order, each after its consent screen, and taps **Done** to finish. A platform whose
+  run broke off before its sign-in page (the connection, or the bundles) shows **Try again**; any other
+  failure is final. **Cancel** or Back on a consent screen, or closing a sign-in page or pressing Back on
+  it, brings the list back with that platform not started; Back on the list is **Done**.
+- **Stopping.** Cancelling the coroutine that runs `verify` ends it, takes the screens down and throws
+  `Cancelled`. So does the activity going away while a screen waits on the user, for example recreated by a
+  rotation or a configuration change your app does not handle: `verify` never reads screens that went
+  away as the user's **Done**.
 - **Where the page may go.** The sign-in page stays on the platform's domains and on the third-party
   sign-in providers the platform uses ([the rules](integration-packs.md#where-the-page-may-go)). If the
   user follows a link anywhere else, that platform ends as failed, with the reason `navigation_refused`.

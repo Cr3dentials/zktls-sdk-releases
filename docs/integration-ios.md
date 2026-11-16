@@ -16,7 +16,7 @@ key works on the Simulator.
 
 ## Install
 
-Swift Package Manager or CocoaPods, as in the [README](../README.md): `from: "2.1.1"`, or `~> 2.0`. The
+Swift Package Manager or CocoaPods, as in the [README](../README.md): `from: "2.2.0"`, or `~> 2.0`. The
 package brings its privacy manifest ([privacy.md](privacy.md)). It needs no `Info.plist` key, and no
 entitlement for TestFlight and App Store builds: App Attest works from the bundle ID and Team ID you
 registered with us. Your App Store Connect export answer is in [export-compliance.md](export-compliance.md).
@@ -115,7 +115,7 @@ final class VerifyViewController: UIViewController {
 | `verificationId` | The verification's id. Every webhook for it carries the same id |
 | `platforms` | One `PlatformOutcome` per platform, in the order you passed them |
 | `platform` | The platform id |
-| `status` | `.done`: the run reached the attester, or its result reached us. `.failed`: the run ended in an error first. `.notStarted`: the user stopped the flow on or before this platform |
+| `status` | `.done`: the run reached the attester, or its result reached us. `.failed`: the run ended in an error first. `.notStarted`: the user did not run it (they tapped Done first, declined its consent screen, or closed its sign-in page) |
 | `reason` | Why a platform failed, a short code for your logs ([errors.md](errors.md#how-each-platform-ended-in-verify)); `nil` otherwise |
 
 `.done` means the result is on its way, not that it has arrived: act on the webhook. Each platform counts
@@ -138,10 +138,11 @@ let outcome = try await Zktls.verify(token: token)      // token: "vt_…", from
 
 1. Run your app on the Simulator or a device with your test key, and call
    `verify(["zktls-demo"], reference: …)`.
-2. Tap **Start** on the intro, then **Continue** on the sign-in notice.
+2. Tap the demo bank on the list. On its consent screen, check both boxes and tap **Continue to
+   verification**.
 3. Sign in to the demo bank with any user name and the password `demo`.
-4. The SDK hands the run to an attester and shows **All done**. `verify` returns with `zktls-demo` as
-   `.done`.
+4. The SDK hands the run to an attester and the list shows the demo bank **Verified**. Tap **Done**:
+   `verify` returns with `zktls-demo` as `.done`.
 5. Within seconds your server receives a `platform.finished` with `"test": true` and the demo bank's
    latest transfer, and a `verification.finished`, in either order. Both carry your reference.
 
@@ -189,7 +190,9 @@ verification with its Partner API key: `GET /partner/verifications/:id`.
 
 ## Theme and strings
 
-The layout of the screens is fixed. You set the colours, the logo and the words, when you configure:
+The layout of the screens is fixed. The platform list and the consent screens are in Cr3dentials' colours,
+with your theme's logo at the top. Your theme's colours apply to the refusal screen. You set the theme and
+the words when you configure:
 
 ```swift
 Zktls.configure(
@@ -200,41 +203,47 @@ Zktls.configure(
         text: .label,
         logo: UIImage(named: "Logo")),
     strings: [
-        "intro.title": NSLocalizedString("Verify your work accounts", comment: ""),
-        "finish.title": NSLocalizedString("Thanks, you're all set", comment: ""),
+        "list.title": NSLocalizedString("Verify your work accounts", comment: ""),
+        "list.done": NSLocalizedString("I'm done", comment: ""),
     ])
 ```
 
 `ZktlsTheme()` with no arguments keeps the SDK's own look. English ships built in; override any string by
 its key, for example with your own translations. The keys are the same on Android. Words in braces are
-filled in by the SDK, so keep them in your text:
+filled in by the SDK, so keep them in your text: a value that drops one, or is blank, is ignored for that
+key.
 
 | Key | English |
 |---|---|
-| `intro.title` | Verify your accounts |
-| `intro.body` | You'll sign in to each one on its own page. Only the result is shared. |
-| `intro.start` / `intro.cancel` | Start / Not now |
-| `next.title` / `next.body` | {done} done / Next: {next} |
-| `next.continue` / `next.stop` | Continue / Stop here |
-| `failed.title` / `failed.continue` | {platform} couldn't be verified / Continue |
-| `finish.title` / `finish.partial` / `finish.close` | All done / Finished {done} of {count} / Close |
+| `list.title` / `list.subtitle` | Choose an account to verify / Verify one or more, in any order. |
+| `list.verified` / `list.failed` | Verified / Couldn't be verified |
+| `list.retry` / `list.retryDetail` | Try again / Couldn't connect. Nothing was shared. |
+| `list.privacy` | You sign in on your own phone. Your passwords and statements stay with you; only the facts needed are shared with this app. |
+| `list.done` / `list.footer` | Done / Powered by Cr3dentials |
+| `consent.agree` | I agree to the {terms} and {privacy}. |
+| `consent.terms` / `consent.privacy` | Terms of Service / Privacy Policy |
+| `consent.itemsTitle` / `consent.close` / `consent.working` | What we'll verify / Cancel / Finishing up… |
 | `refusal.device` / `refusal.other` / `refusal.close` | This device can't be verified / Verification isn't available right now / Close |
-| `disclosure.title` / `disclosure.body` | Sign in to {platform} / {platform} opens its own sign-in page. Data read: {categories}. |
-| `disclosure.accept` / `disclosure.decline` | Continue / Cancel |
 
-In `disclosure.title` and `disclosure.body`, `{platform}` is the site the page signs in to, as the
-platform's signed pack names it (for `zktls-demo`, "zkTLS Demo Bank"), or the platform's name when the pack
-names none; the other screens use the platform's name. The refusal screen shows `refusal.device` for
-`device_not_verified` and `refusal.other` for every other code.
+In `consent.agree`, `{terms}` and `{privacy}` are the links to the Terms of Service and the Privacy Policy.
+The rest of each consent screen comes from us, per platform: its title, the authorization line, the button,
+and the privacy words. The bullets under `consent.itemsTitle` are what the page reads, as the platform's
+operator-signed pack declares it. The refusal screen shows `refusal.device` for `device_not_verified` and
+`refusal.other` for every other code.
 
 ## Things to know
 
 - **The screens.** The SDK presents them with UIKit, over the top-most view controller of your key
   window. SwiftUI apps need nothing extra.
-- **Stopping.** **Not now** on the intro, **Stop here** between platforms, **Cancel** on the sign-in
-  notice, or closing a sign-in page (its Close button, or a swipe down) ends the flow. The platform the
-  user was on, and every later one, are not started. Cancelling the `Task` that runs `verify` ends it too,
-  and takes the screens down.
+- **The flow.** The platform list shows the platforms you passed, one or more. The user runs the ones
+  they choose, in any order, each after its consent screen, and taps **Done** to finish. A platform whose
+  run broke off before its sign-in page (the connection, or the bundles) shows **Try again**; any other
+  failure is final. **Cancel** on a consent screen, or closing a sign-in page (its Close button, or a swipe
+  down), brings the list back with that platform not started. `verify` returns when the user taps
+  **Done**, once the screens are down, so you can present at once.
+- **Stopping.** Cancelling the `Task` that runs `verify` ends it, takes the screens down and throws
+  `cancelled`. So does your app dismissing the SDK's screens, or UIKit refusing to show them: `verify`
+  never reads screens that went away as the user's **Done**.
 - **Where the page may go.** The sign-in page stays on the platform's domains and on the third-party
   sign-in providers the platform uses ([the rules](integration-packs.md#where-the-page-may-go)). If the
   user follows a link anywhere else, that platform ends as failed, with the reason `navigation_refused`.

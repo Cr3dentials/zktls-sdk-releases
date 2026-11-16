@@ -3671,25 +3671,17 @@ internal protocol VerifyHost : AnyObject {
     func sign(body: Data) async throws  -> String
     
     /**
-     * The intro screen, naming the platforms in order: true to start, false to stop before any.
+     * The platform list: one row per platform, in the partner's
+     * order. Answers the index of the row the user tapped, which must be `Available` or `Retry`, or `None` when the
+     * user tapped Done, which ends the verification. A tap on any other row shows the list again.
      */
-    func showIntro(names: [String]) async  -> Bool
+    func showList(rows: [PlatformRow]) async  -> UInt32?
     
     /**
-     * Between platforms, after `finished` was done: true to go on to `next`, false to stop here.
+     * `name`'s consent screen, before its sign-in notice: true once the user checked both boxes and
+     * tapped its button, false when they closed it. Every platform's run waits on it.
      */
-    func showNext(finished: String, next: String) async  -> Bool
-    
-    /**
-     * `name` could not be verified; the user continues to the next platform, or to the finish.
-     */
-    func showFailed(name: String) async 
-    
-    /**
-     * The finish screen, with how each platform ended. Not called when no platform ran to an end (the
-     * intro declined, or the first page closed or its notice declined).
-     */
-    func showFinish(outcome: VerifyOutcome) async 
+    func showConsent(name: String, consent: Consent) async  -> Bool
     
     /**
      * The verification did not start. `code` is a refusal's (`device_not_verified` reads "this device
@@ -3869,85 +3861,45 @@ open func sign(body: Data)async throws  -> String {
 }
     
     /**
-     * The intro screen, naming the platforms in order: true to start, false to stop before any.
+     * The platform list: one row per platform, in the partner's
+     * order. Answers the index of the row the user tapped, which must be `Available` or `Retry`, or `None` when the
+     * user tapped Done, which ends the verification. A tap on any other row shows the list again.
      */
-open func showIntro(names: [String])async  -> Bool {
+open func showList(rows: [PlatformRow])async  -> UInt32? {
     return
         try!  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_zktls_sdk_fn_method_verifyhost_show_intro(
+                uniffi_zktls_sdk_fn_method_verifyhost_show_list(
                     self.uniffiClonePointer(),
-                    FfiConverterSequenceString.lower(names)
+                    FfiConverterSequenceTypePlatformRow.lower(rows)
+                )
+            },
+            pollFunc: ffi_zktls_sdk_rust_future_poll_rust_buffer,
+            completeFunc: ffi_zktls_sdk_rust_future_complete_rust_buffer,
+            freeFunc: ffi_zktls_sdk_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionUInt32.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * `name`'s consent screen, before its sign-in notice: true once the user checked both boxes and
+     * tapped its button, false when they closed it. Every platform's run waits on it.
+     */
+open func showConsent(name: String, consent: Consent)async  -> Bool {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_zktls_sdk_fn_method_verifyhost_show_consent(
+                    self.uniffiClonePointer(),
+                    FfiConverterString.lower(name),FfiConverterTypeConsent.lower(consent)
                 )
             },
             pollFunc: ffi_zktls_sdk_rust_future_poll_i8,
             completeFunc: ffi_zktls_sdk_rust_future_complete_i8,
             freeFunc: ffi_zktls_sdk_rust_future_free_i8,
             liftFunc: FfiConverterBool.lift,
-            errorHandler: nil
-            
-        )
-}
-    
-    /**
-     * Between platforms, after `finished` was done: true to go on to `next`, false to stop here.
-     */
-open func showNext(finished: String, next: String)async  -> Bool {
-    return
-        try!  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_zktls_sdk_fn_method_verifyhost_show_next(
-                    self.uniffiClonePointer(),
-                    FfiConverterString.lower(finished),FfiConverterString.lower(next)
-                )
-            },
-            pollFunc: ffi_zktls_sdk_rust_future_poll_i8,
-            completeFunc: ffi_zktls_sdk_rust_future_complete_i8,
-            freeFunc: ffi_zktls_sdk_rust_future_free_i8,
-            liftFunc: FfiConverterBool.lift,
-            errorHandler: nil
-            
-        )
-}
-    
-    /**
-     * `name` could not be verified; the user continues to the next platform, or to the finish.
-     */
-open func showFailed(name: String)async  {
-    return
-        try!  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_zktls_sdk_fn_method_verifyhost_show_failed(
-                    self.uniffiClonePointer(),
-                    FfiConverterString.lower(name)
-                )
-            },
-            pollFunc: ffi_zktls_sdk_rust_future_poll_void,
-            completeFunc: ffi_zktls_sdk_rust_future_complete_void,
-            freeFunc: ffi_zktls_sdk_rust_future_free_void,
-            liftFunc: { $0 },
-            errorHandler: nil
-            
-        )
-}
-    
-    /**
-     * The finish screen, with how each platform ended. Not called when no platform ran to an end (the
-     * intro declined, or the first page closed or its notice declined).
-     */
-open func showFinish(outcome: VerifyOutcome)async  {
-    return
-        try!  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_zktls_sdk_fn_method_verifyhost_show_finish(
-                    self.uniffiClonePointer(),
-                    FfiConverterTypeVerifyOutcome.lower(outcome)
-                )
-            },
-            pollFunc: ffi_zktls_sdk_rust_future_poll_void,
-            completeFunc: ffi_zktls_sdk_rust_future_complete_void,
-            freeFunc: ffi_zktls_sdk_rust_future_free_void,
-            liftFunc: { $0 },
             errorHandler: nil
             
         )
@@ -4191,28 +4143,28 @@ fileprivate struct UniffiCallbackInterfaceVerifyHost {
             )
             uniffiOutReturn.pointee = uniffiForeignFuture
         },
-        showIntro: { (
+        showList: { (
             uniffiHandle: UInt64,
-            names: RustBuffer,
-            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteI8,
+            rows: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteRustBuffer,
             uniffiCallbackData: UInt64,
             uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
         ) in
             let makeCall = {
-                () async throws -> Bool in
+                () async throws -> UInt32? in
                 guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
-                return await uniffiObj.showIntro(
-                     names: try FfiConverterSequenceString.lift(names)
+                return await uniffiObj.showList(
+                     rows: try FfiConverterSequenceTypePlatformRow.lift(rows)
                 )
             }
 
-            let uniffiHandleSuccess = { (returnValue: Bool) in
+            let uniffiHandleSuccess = { (returnValue: UInt32?) in
                 uniffiFutureCallback(
                     uniffiCallbackData,
-                    UniffiForeignFutureStructI8(
-                        returnValue: FfiConverterBool.lower(returnValue),
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: FfiConverterOptionUInt32.lower(returnValue),
                         callStatus: RustCallStatus()
                     )
                 )
@@ -4220,8 +4172,8 @@ fileprivate struct UniffiCallbackInterfaceVerifyHost {
             let uniffiHandleError = { (statusCode, errorBuf) in
                 uniffiFutureCallback(
                     uniffiCallbackData,
-                    UniffiForeignFutureStructI8(
-                        returnValue: 0,
+                    UniffiForeignFutureStructRustBuffer(
+                        returnValue: RustBuffer.empty(),
                         callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
                     )
                 )
@@ -4233,71 +4185,30 @@ fileprivate struct UniffiCallbackInterfaceVerifyHost {
             )
             uniffiOutReturn.pointee = uniffiForeignFuture
         },
-        showNext: { (
-            uniffiHandle: UInt64,
-            finished: RustBuffer,
-            next: RustBuffer,
-            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteI8,
-            uniffiCallbackData: UInt64,
-            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
-        ) in
-            let makeCall = {
-                () async throws -> Bool in
-                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return await uniffiObj.showNext(
-                     finished: try FfiConverterString.lift(finished),
-                     next: try FfiConverterString.lift(next)
-                )
-            }
-
-            let uniffiHandleSuccess = { (returnValue: Bool) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureStructI8(
-                        returnValue: FfiConverterBool.lower(returnValue),
-                        callStatus: RustCallStatus()
-                    )
-                )
-            }
-            let uniffiHandleError = { (statusCode, errorBuf) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureStructI8(
-                        returnValue: 0,
-                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
-                    )
-                )
-            }
-            let uniffiForeignFuture = uniffiTraitInterfaceCallAsync(
-                makeCall: makeCall,
-                handleSuccess: uniffiHandleSuccess,
-                handleError: uniffiHandleError
-            )
-            uniffiOutReturn.pointee = uniffiForeignFuture
-        },
-        showFailed: { (
+        showConsent: { (
             uniffiHandle: UInt64,
             name: RustBuffer,
-            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
+            consent: RustBuffer,
+            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteI8,
             uniffiCallbackData: UInt64,
             uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
         ) in
             let makeCall = {
-                () async throws -> () in
+                () async throws -> Bool in
                 guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
-                return await uniffiObj.showFailed(
-                     name: try FfiConverterString.lift(name)
+                return await uniffiObj.showConsent(
+                     name: try FfiConverterString.lift(name),
+                     consent: try FfiConverterTypeConsent.lift(consent)
                 )
             }
 
-            let uniffiHandleSuccess = { (returnValue: ()) in
+            let uniffiHandleSuccess = { (returnValue: Bool) in
                 uniffiFutureCallback(
                     uniffiCallbackData,
-                    UniffiForeignFutureStructVoid(
+                    UniffiForeignFutureStructI8(
+                        returnValue: FfiConverterBool.lower(returnValue),
                         callStatus: RustCallStatus()
                     )
                 )
@@ -4305,47 +4216,8 @@ fileprivate struct UniffiCallbackInterfaceVerifyHost {
             let uniffiHandleError = { (statusCode, errorBuf) in
                 uniffiFutureCallback(
                     uniffiCallbackData,
-                    UniffiForeignFutureStructVoid(
-                        callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
-                    )
-                )
-            }
-            let uniffiForeignFuture = uniffiTraitInterfaceCallAsync(
-                makeCall: makeCall,
-                handleSuccess: uniffiHandleSuccess,
-                handleError: uniffiHandleError
-            )
-            uniffiOutReturn.pointee = uniffiForeignFuture
-        },
-        showFinish: { (
-            uniffiHandle: UInt64,
-            outcome: RustBuffer,
-            uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
-            uniffiCallbackData: UInt64,
-            uniffiOutReturn: UnsafeMutablePointer<UniffiForeignFuture>
-        ) in
-            let makeCall = {
-                () async throws -> () in
-                guard let uniffiObj = try? FfiConverterTypeVerifyHost.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return await uniffiObj.showFinish(
-                     outcome: try FfiConverterTypeVerifyOutcome.lift(outcome)
-                )
-            }
-
-            let uniffiHandleSuccess = { (returnValue: ()) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureStructVoid(
-                        callStatus: RustCallStatus()
-                    )
-                )
-            }
-            let uniffiHandleError = { (statusCode, errorBuf) in
-                uniffiFutureCallback(
-                    uniffiCallbackData,
-                    UniffiForeignFutureStructVoid(
+                    UniffiForeignFutureStructI8(
+                        returnValue: 0,
                         callStatus: RustCallStatus(code: statusCode, errorBuf: errorBuf)
                     )
                 )
@@ -4991,6 +4863,245 @@ public func FfiConverterTypeConfinementDecision_lower(_ value: ConfinementDecisi
 
 
 /**
+ * A platform's consent screen, worded by our backend (the web consent screen's text, for a phone): the
+ * user accepts it before the platform's sign-in notice and page. Every field is required: a start
+ * whose runs do not all carry it is malformed, so the screen is never skipped.
+ */
+internal struct Consent {
+    /**
+     * "Verify your {platform} account".
+     */
+    public var title: String
+    /**
+     * The line under the title.
+     */
+    public var subtitle: String
+    /**
+     * The privacy card's title.
+     */
+    public var privacyTitle: String
+    /**
+     * The privacy card's text.
+     */
+    public var privacyBody: String
+    /**
+     * What is read from the platform, one bullet each: on the screen, the platform's operator-signed pack's
+     * `data_categories`, which take the place of our backend's words.
+     */
+    public var verificationItems: [String]
+    /**
+     * The "how this works" toggle's label while its text is hidden.
+     */
+    public var showHowThisWorksLabel: String
+    /**
+     * The toggle's label while its text is shown.
+     */
+    public var hideHowThisWorksLabel: String
+    /**
+     * The text the toggle shows.
+     */
+    public var howThisWorksBody: String
+    /**
+     * The first checkbox's label: the user authorizes the verification.
+     */
+    public var authConsentLabel: String
+    /**
+     * The button, enabled once both checkboxes are checked.
+     */
+    public var cta: String
+    /**
+     * The line at the foot of the screen, "Powered by Cr3dentials".
+     */
+    public var footer: String
+    /**
+     * The second checkbox's Terms of Service link, `https://`.
+     */
+    public var termsUrl: String
+    /**
+     * The second checkbox's Privacy Policy link, `https://`.
+     */
+    public var privacyUrl: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * "Verify your {platform} account".
+         */title: String, 
+        /**
+         * The line under the title.
+         */subtitle: String, 
+        /**
+         * The privacy card's title.
+         */privacyTitle: String, 
+        /**
+         * The privacy card's text.
+         */privacyBody: String, 
+        /**
+         * What is read from the platform, one bullet each: on the screen, the platform's operator-signed pack's
+         * `data_categories`, which take the place of our backend's words.
+         */verificationItems: [String], 
+        /**
+         * The "how this works" toggle's label while its text is hidden.
+         */showHowThisWorksLabel: String, 
+        /**
+         * The toggle's label while its text is shown.
+         */hideHowThisWorksLabel: String, 
+        /**
+         * The text the toggle shows.
+         */howThisWorksBody: String, 
+        /**
+         * The first checkbox's label: the user authorizes the verification.
+         */authConsentLabel: String, 
+        /**
+         * The button, enabled once both checkboxes are checked.
+         */cta: String, 
+        /**
+         * The line at the foot of the screen, "Powered by Cr3dentials".
+         */footer: String, 
+        /**
+         * The second checkbox's Terms of Service link, `https://`.
+         */termsUrl: String, 
+        /**
+         * The second checkbox's Privacy Policy link, `https://`.
+         */privacyUrl: String) {
+        self.title = title
+        self.subtitle = subtitle
+        self.privacyTitle = privacyTitle
+        self.privacyBody = privacyBody
+        self.verificationItems = verificationItems
+        self.showHowThisWorksLabel = showHowThisWorksLabel
+        self.hideHowThisWorksLabel = hideHowThisWorksLabel
+        self.howThisWorksBody = howThisWorksBody
+        self.authConsentLabel = authConsentLabel
+        self.cta = cta
+        self.footer = footer
+        self.termsUrl = termsUrl
+        self.privacyUrl = privacyUrl
+    }
+}
+
+
+
+extension Consent: Equatable, Hashable {
+    public static func ==(lhs: Consent, rhs: Consent) -> Bool {
+        if lhs.title != rhs.title {
+            return false
+        }
+        if lhs.subtitle != rhs.subtitle {
+            return false
+        }
+        if lhs.privacyTitle != rhs.privacyTitle {
+            return false
+        }
+        if lhs.privacyBody != rhs.privacyBody {
+            return false
+        }
+        if lhs.verificationItems != rhs.verificationItems {
+            return false
+        }
+        if lhs.showHowThisWorksLabel != rhs.showHowThisWorksLabel {
+            return false
+        }
+        if lhs.hideHowThisWorksLabel != rhs.hideHowThisWorksLabel {
+            return false
+        }
+        if lhs.howThisWorksBody != rhs.howThisWorksBody {
+            return false
+        }
+        if lhs.authConsentLabel != rhs.authConsentLabel {
+            return false
+        }
+        if lhs.cta != rhs.cta {
+            return false
+        }
+        if lhs.footer != rhs.footer {
+            return false
+        }
+        if lhs.termsUrl != rhs.termsUrl {
+            return false
+        }
+        if lhs.privacyUrl != rhs.privacyUrl {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(title)
+        hasher.combine(subtitle)
+        hasher.combine(privacyTitle)
+        hasher.combine(privacyBody)
+        hasher.combine(verificationItems)
+        hasher.combine(showHowThisWorksLabel)
+        hasher.combine(hideHowThisWorksLabel)
+        hasher.combine(howThisWorksBody)
+        hasher.combine(authConsentLabel)
+        hasher.combine(cta)
+        hasher.combine(footer)
+        hasher.combine(termsUrl)
+        hasher.combine(privacyUrl)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal struct FfiConverterTypeConsent: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Consent {
+        return
+            try Consent(
+                title: FfiConverterString.read(from: &buf), 
+                subtitle: FfiConverterString.read(from: &buf), 
+                privacyTitle: FfiConverterString.read(from: &buf), 
+                privacyBody: FfiConverterString.read(from: &buf), 
+                verificationItems: FfiConverterSequenceString.read(from: &buf), 
+                showHowThisWorksLabel: FfiConverterString.read(from: &buf), 
+                hideHowThisWorksLabel: FfiConverterString.read(from: &buf), 
+                howThisWorksBody: FfiConverterString.read(from: &buf), 
+                authConsentLabel: FfiConverterString.read(from: &buf), 
+                cta: FfiConverterString.read(from: &buf), 
+                footer: FfiConverterString.read(from: &buf), 
+                termsUrl: FfiConverterString.read(from: &buf), 
+                privacyUrl: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Consent, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterString.write(value.privacyTitle, into: &buf)
+        FfiConverterString.write(value.privacyBody, into: &buf)
+        FfiConverterSequenceString.write(value.verificationItems, into: &buf)
+        FfiConverterString.write(value.showHowThisWorksLabel, into: &buf)
+        FfiConverterString.write(value.hideHowThisWorksLabel, into: &buf)
+        FfiConverterString.write(value.howThisWorksBody, into: &buf)
+        FfiConverterString.write(value.authConsentLabel, into: &buf)
+        FfiConverterString.write(value.cta, into: &buf)
+        FfiConverterString.write(value.footer, into: &buf)
+        FfiConverterString.write(value.termsUrl, into: &buf)
+        FfiConverterString.write(value.privacyUrl, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypeConsent_lift(_ buf: RustBuffer) throws -> Consent {
+    return try FfiConverterTypeConsent.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypeConsent_lower(_ value: Consent) -> RustBuffer {
+    return FfiConverterTypeConsent.lower(value)
+}
+
+
+/**
  * One request header for `post_bytes` and `get_bytes`.
  */
 public struct PlatformHeader {
@@ -5260,6 +5371,87 @@ public func FfiConverterTypePlatformResponse_lift(_ buf: RustBuffer) throws -> P
 #endif
 public func FfiConverterTypePlatformResponse_lower(_ value: PlatformResponse) -> RustBuffer {
     return FfiConverterTypePlatformResponse.lower(value)
+}
+
+
+/**
+ * One row of the platform list.
+ */
+internal struct PlatformRow {
+    /**
+     * The platform's name, as our backend gives it.
+     */
+    public var name: String
+    /**
+     * Whether the user may tap it, and how it ended if not.
+     */
+    public var state: PlatformRowState
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The platform's name, as our backend gives it.
+         */name: String, 
+        /**
+         * Whether the user may tap it, and how it ended if not.
+         */state: PlatformRowState) {
+        self.name = name
+        self.state = state
+    }
+}
+
+
+
+extension PlatformRow: Equatable, Hashable {
+    public static func ==(lhs: PlatformRow, rhs: PlatformRow) -> Bool {
+        if lhs.name != rhs.name {
+            return false
+        }
+        if lhs.state != rhs.state {
+            return false
+        }
+        return true
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(name)
+        hasher.combine(state)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal struct FfiConverterTypePlatformRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlatformRow {
+        return
+            try PlatformRow(
+                name: FfiConverterString.read(from: &buf), 
+                state: FfiConverterTypePlatformRowState.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PlatformRow, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterTypePlatformRowState.write(value.state, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypePlatformRow_lift(_ buf: RustBuffer) throws -> PlatformRow {
+    return try FfiConverterTypePlatformRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypePlatformRow_lower(_ value: PlatformRow) -> RustBuffer {
+    return FfiConverterTypePlatformRow.lower(value)
 }
 
 
@@ -7301,7 +7493,8 @@ public struct VerifyOutcome {
      */
     public var verificationId: String
     /**
-     * Each platform, in the order they ran.
+     * Each platform offered, in the order the request or token gave them, whichever order the user
+     * verified them in.
      */
     public var platforms: [PlatformOutcome]
 
@@ -7312,7 +7505,8 @@ public struct VerifyOutcome {
          * The verification's id, which every webhook about it carries.
          */verificationId: String, 
         /**
-         * Each platform, in the order they ran.
+         * Each platform offered, in the order the request or token gave them, whichever order the user
+         * verified them in.
          */platforms: [PlatformOutcome]) {
         self.verificationId = verificationId
         self.platforms = platforms
@@ -7725,6 +7919,101 @@ extension Phase: Equatable, Hashable {}
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
+ * A platform's state on the list.
+ */
+
+internal enum PlatformRowState {
+    
+    /**
+     * Not run yet, or the user backed out of it (declined its consent or sign-in notice, or closed its
+     * page): the user may tap it.
+     */
+    case available
+    /**
+     * Its run reached our backend: final.
+     */
+    case verified
+    /**
+     * Its run failed once its page was up, or failed in a way that would repeat (its pack refused): final.
+     */
+    case failed
+    /**
+     * Its run failed before its page (nothing reached the platform or our backend) because the connection
+     * broke off or the bundles could not be had: the user may tap it to try again.
+     */
+    case retry
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal struct FfiConverterTypePlatformRowState: FfiConverterRustBuffer {
+    typealias SwiftType = PlatformRowState
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PlatformRowState {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .available
+        
+        case 2: return .verified
+        
+        case 3: return .failed
+        
+        case 4: return .retry
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: PlatformRowState, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .available:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .verified:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .retry:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypePlatformRowState_lift(_ buf: RustBuffer) throws -> PlatformRowState {
+    return try FfiConverterTypePlatformRowState.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+internal func FfiConverterTypePlatformRowState_lower(_ value: PlatformRowState) -> RustBuffer {
+    return FfiConverterTypePlatformRowState.lower(value)
+}
+
+
+
+extension PlatformRowState: Equatable, Hashable {}
+
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
  * How one platform of a verification ended on the phone.
  */
 
@@ -7740,9 +8029,9 @@ public enum PlatformStatus {
      */
     case failed
     /**
-     * The run never ran: the user declined the intro, stopped between platforms, or closed a
-     * platform's sign-in page or declined its sign-in notice, which ends that platform and every
-     * later one.
+     * The run never ran to an end: the user tapped Done without verifying it, declined its consent
+     * screen or sign-in notice, or closed its sign-in page, and did not verify it after; or the
+     * verification was cut off (the app's background time ran out mid-run).
      */
     case notStarted
 }
@@ -8232,6 +8521,30 @@ extension VerifyRequest: Equatable, Hashable {}
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
     typealias SwiftType = UInt64?
 
@@ -8395,6 +8708,31 @@ fileprivate struct FfiConverterSequenceTypePlatformOutcome: FfiConverterRustBuff
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypePlatformOutcome.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypePlatformRow: FfiConverterRustBuffer {
+    typealias SwiftType = [PlatformRow]
+
+    public static func write(_ value: [PlatformRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypePlatformRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PlatformRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [PlatformRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypePlatformRow.read(from: &buf))
         }
         return seq
     }
@@ -8741,7 +9079,8 @@ public func setPlatformHttp(http: PlatformHttp) {try! rustCall() {
 }
 }
 /**
- * Runs a partner's platforms, one after another, with the SDK's own screens. The device attests
+ * Offers a partner's platforms and runs the ones the user picks, each after its consent screen, with
+ * the SDK's own screens. The device attests
  * itself (a live `app_key`; a test key skips it), our backend starts a verification of `request`'s
  * platforms, and each platform's pack runs in the host's WebView as `run_tree` runs it, its attested
  * read handed to the attester, which posts the result to our backend; the partner's server gets a
@@ -9032,7 +9371,7 @@ private var initializationResult: InitializationResult = {
     if (uniffi_zktls_sdk_checksum_func_set_platform_http() != 63658) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_func_verify() != 35328) {
+    if (uniffi_zktls_sdk_checksum_func_verify() != 11855) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zktls_sdk_checksum_func_zktls_confinement_policy() != 50878) {
@@ -9233,28 +9572,22 @@ private var initializationResult: InitializationResult = {
     if (uniffi_zktls_sdk_checksum_method_verifyhost_sign() != 34390) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_intro() != 38052) {
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_list() != 24181) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_next() != 37072) {
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_consent() != 33661) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_failed() != 59064) {
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_refusal() != 29937) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_finish() != 53716) {
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_tree_host() != 58414) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_show_refusal() != 45797) {
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_begin_background() != 33253) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_tree_host() != 30684) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_begin_background() != 31034) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_zktls_sdk_checksum_method_verifyhost_end_background() != 48629) {
+    if (uniffi_zktls_sdk_checksum_method_verifyhost_end_background() != 11444) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_zktls_sdk_checksum_method_witnesshandle_bytes_summary() != 30559) {

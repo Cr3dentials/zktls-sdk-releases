@@ -6,19 +6,28 @@ you the facts and the words.
 
 ## What the user sees
 
-`verify` shows its own screens: an intro naming the platforms, with **Start** and **Not now**, and,
-before each platform's page opens, a sign-in notice naming the site the page signs in to, as the
-platform's signed pack names it, and the categories of data its pack reads:
+`verify` shows its own screens: a list of the platforms your app offered, and, before each platform's
+page opens, that platform's consent screen. The consent screen names the platform, lists the categories of
+data its page reads (as the platform's operator-signed pack declares them, the same pack the run then
+runs), says that the login never leaves the device and how the verification works, and has two
+checkboxes:
 
-> **Sign in to {platform}**
+> [Cancel]
 >
-> {platform} opens its own sign-in page. Data read: {categories}.
+> **Verify your {platform} account**
 >
-> [Cancel] [Continue]
+> What we'll verify: {categories, one per line}
+>
+> [ ] I authorize Cr3dentials to verify my income and identity from my {platform} account for this
+> application.
+> [ ] I agree to the Terms of Service and Privacy Policy.
+>
+> [Continue to verification]
 
-Cancel (on Android also Back, or a tap outside the notice) opens nothing and reads nothing, and ends the
-flow. You may translate the screens' words with `strings` ([iOS](integration-ios.md#theme-and-strings));
-keep every fact the notice states.
+The button stays disabled until both boxes are checked. Cancel (on Android also Back) opens nothing and
+reads nothing, and the list comes back with that platform not run. You may translate the SDK's own words
+with `strings` ([iOS](integration-ios.md#theme-and-strings)); the consent screen's own text and its
+categories come from us and from the platform's signed pack.
 
 In proof mode, before the sign-in page opens, the SDK's default presenter shows this, with the
 institution's domains filled in:
@@ -130,8 +139,9 @@ the SDK shows the platform's page in a screen of its own:
 Paste into App Store Connect → App Review Information → Notes, filling in the brackets:
 
 > This app uses the zkTLS SDK to let the user verify [what, e.g. "their freelance earnings"] from their
-> own [platform] account. When the user taps [button], the SDK shows a short intro, then a notice naming
-> the data it reads, then opens [platform]'s own sign-in page in an in-app browser. The user signs in on
+> own [platform] account. When the user taps [button], the SDK shows a list of the accounts the user may
+> verify, then, for the one they pick, a consent screen naming the data it reads, which the user accepts
+> by checking two boxes, then opens [platform]'s own sign-in page in an in-app browser. The user signs in on
 > that page; the app never sees or stores their password. The SDK then hands the signed-in session to a
 > zkTLS enclave, which reads [the figures] from [platform] once and signs them. The result goes to the
 > zkTLS service, which sends it to our server; the app never receives it.

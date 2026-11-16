@@ -23,7 +23,7 @@ Work down this page from first contact to production. Each line links the page t
 ## 3. Install
 
 - [ ] iOS: Swift Package Manager or CocoaPods; Android: Maven Central ([README](../README.md)). No token is needed.
-- [ ] Pin a version (`from: "2.1.1"`, `~> 2.0`, `2.1.1`). Read the [changelog](../CHANGELOG.md) before every upgrade.
+- [ ] Pin a version (`from: "2.2.0"`, `~> 2.0`, `2.2.0`). Read the [changelog](../CHANGELOG.md) before every upgrade.
 
 ## 4. Integrate
 
@@ -41,8 +41,9 @@ Work down this page from first contact to production. Each line links the page t
 
 - [ ] With the test key and `zktls-demo`, on the Simulator or an emulator: a signed `platform.finished`, then a
       `verification.finished`, reach your server.
-- [ ] Decline the intro. Stop between platforms. Close the sign-in page. Tap a link off the platform. Leave the
-      app during a hand-off. Switch from Wi-Fi to cellular. Each ends cleanly, and the user can start again.
+- [ ] Tap Done before any platform. Cancel a consent screen. Close the sign-in page. Tap a link off the platform.
+      Leave the app during a hand-off. Rotate the phone while the list is up (Android). Switch from Wi-Fi to
+      cellular. Each ends cleanly, and the user can start again.
 - [ ] Kill the app in the middle of the flow: `verification.finished` still arrives, about 2 hours after the
       verification started, with the remaining platforms `not_started`.
 - [ ] A delivery with a changed body, or an old `t`, is rejected by your endpoint.

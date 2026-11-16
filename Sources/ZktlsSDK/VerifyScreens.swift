@@ -7,8 +7,18 @@ protocol ScreenPresenter: AnyObject {
     /// screen down and answers false.
     func ask(_ screen: VerifyScreen) async -> Bool
 
-    /// Takes down every screen still up, each answering false: the verification is over.
-    func dismissAll()
+    /// Shows `list` until the user taps a row they may run, its index, or Done: nil for Done, a list that went
+    /// away, or one that could not be shown. A cancel of the caller takes the list down and answers nil.
+    func pick(_ list: PlatformList) async -> Int?
+
+    /// Shows `screen` until the user answers: true once both its boxes are checked and its button tapped; false for
+    /// its close button, a screen that went away, or one that could not be shown. A cancel of the caller takes the
+    /// screen down and answers false.
+    func consent(_ screen: ConsentScreen) async -> Bool
+
+    /// Takes down every screen still up, each answering false: the verification is over. Returns once they are down,
+    /// so the app can present at once.
+    func dismissAll() async
 }
 
 /// A screen that is up, which a cancel takes down.
@@ -17,13 +27,16 @@ protocol Shown: AnyObject, Sendable {
     func close()
 }
 
-/// One screen's answer: the first of the user's reply, a cancel and a screen not shown, the last two false.
-private final class FirstAnswer: @unchecked Sendable {
+/// One screen's answer: the first of the user's reply, a cancel and a screen not shown, the last two `none`.
+private final class FirstAnswer<T>: @unchecked Sendable {
     private let lock = NSLock()
-    private var result: Bool?
-    private var waiter: CheckedContinuation<Bool, Never>?
+    private let none: T
+    private var result: T?
+    private var waiter: CheckedContinuation<T, Never>?
     private var shown: Shown?
     private var cancelled = false
+
+    init(none: T) { self.none = none }
 
     var isCancelled: Bool {
         lock.lock()
@@ -31,7 +44,7 @@ private final class FirstAnswer: @unchecked Sendable {
         return cancelled
     }
 
-    func wait(_ c: CheckedContinuation<Bool, Never>) {
+    func wait(_ c: CheckedContinuation<T, Never>) {
         lock.lock()
         guard let r = result else {
             waiter = c
@@ -42,7 +55,7 @@ private final class FirstAnswer: @unchecked Sendable {
         c.resume(returning: r)
     }
 
-    func reply(_ answer: Bool) {
+    func reply(_ answer: T) {
         lock.lock()
         guard result == nil else { return lock.unlock() }
         result = answer
@@ -60,16 +73,19 @@ private final class FirstAnswer: @unchecked Sendable {
         return !cancelled
     }
 
-    /// The caller gave up: false, and the screen up, if any, to take down.
+    /// The caller gave up: `none`, and the screen up, if any, to take down.
     func cancel() -> Shown? {
         lock.lock()
         cancelled = true
         let s = shown
         shown = nil
         lock.unlock()
-        reply(false)
+        reply(none)
         return s
     }
+
+    /// The screen could not be shown: `none`.
+    func notShown() { reply(none) }
 }
 
 /// The answer to one screen. `show` runs through `ui` (the main queue) and puts the screen up, handing it the
@@ -79,13 +95,21 @@ private final class FirstAnswer: @unchecked Sendable {
 func answered(
     ui: @escaping (@escaping @Sendable () -> Void) -> Void, show: @escaping @Sendable (_ answer: @escaping @Sendable (Bool) -> Void) -> Shown?
 ) async -> Bool {
-    let a = FirstAnswer()
+    await answered(ui: ui, none: false, show: show)
+}
+
+/// As `answered(ui:show:)`, for a screen whose answer is a `T`, and `none` for a screen that could not be shown.
+func answered<T: Sendable>(
+    ui: @escaping (@escaping @Sendable () -> Void) -> Void, none: T,
+    show: @escaping @Sendable (_ answer: @escaping @Sendable (T) -> Void) -> Shown?
+) async -> T {
+    let a = FirstAnswer(none: none)
     return await withTaskCancellationHandler {
         await withCheckedContinuation { c in
             a.wait(c)
             ui {
                 guard !a.isCancelled else { return }
-                guard let shown = show({ a.reply($0) }) else { return a.reply(false) }
+                guard let shown = show({ a.reply($0) }) else { return a.notShown() }
                 if !a.keep(shown) { shown.close() }
             }
         }
@@ -118,16 +142,26 @@ func answered(
 }
 
 /// The screens as view controllers presented over the app's top-most one, which `top` finds the root of: the
-/// SDK has no window of its own. Each is coloured by `theme`.
+/// SDK has no window of its own. Each is colored by `theme`, but the platform list and the consent screen, which
+/// are full-screen pages in Cr3dentials' colors (`ListPage`, `ConsentPage`) on one stage (`StageController`), up
+/// from the first page to the end of the verification: of the theme, only its logo reaches them, at the top.
+///
+/// A page that cannot go up, or whose stage goes while it waits on the user (the app dismissed it, UIKit refused it),
+/// is no answer of the user's: `lost` ends the verification first (`cancel` of its session), so the core ends it as
+/// cancelled rather than reading the page's `none` as Done or a decline.
 final class VerifyScreens: ScreenPresenter, @unchecked Sendable {
     private let theme: ZktlsTheme
     private let top: @MainActor () -> UIViewController?
+    private let lost: () -> Void
     /// The screens up now. On the main thread only.
-    private var open: [ScreenController] = []
+    private var open: [Shown] = []
+    /// The pages' stage, while it is up. On the main thread only.
+    private var stage: StageController?
 
-    init(theme: ZktlsTheme, top: @escaping @MainActor () -> UIViewController? = keyWindowRoot) {
+    init(theme: ZktlsTheme, top: @escaping @MainActor () -> UIViewController? = keyWindowRoot, lost: @escaping () -> Void = {}) {
         self.theme = theme
         self.top = top
+        self.lost = lost
     }
 
     func ask(_ screen: VerifyScreen) async -> Bool {
@@ -136,8 +170,73 @@ final class VerifyScreens: ScreenPresenter, @unchecked Sendable {
         }
     }
 
-    func dismissAll() {
-        DispatchQueue.main.async { self.open.forEach { $0.close() } }
+    func pick(_ list: PlatformList) async -> Int? {
+        await answered(ui: { body in DispatchQueue.main.async(execute: body) }, none: nil) { answer in
+            MainActor.assumeIsolated {
+                self.present { width, gone in ListPage(list: list, logo: self.theme.logo, width: width) { page, i in gone(page); answer(i) } }
+            }
+        }
+    }
+
+    func consent(_ screen: ConsentScreen) async -> Bool {
+        await answered(ui: { body in DispatchQueue.main.async(execute: body) }, none: false) { answer in
+            MainActor.assumeIsolated {
+                self.present { width, gone in ConsentPage(screen: screen, logo: self.theme.logo, width: width) { page, a in gone(page); answer(a) } }
+            }
+        }
+    }
+
+    /// On the main thread: the page `make` makes, for the screen's width, on the stage, presented over the top-most
+    /// controller when it is not up yet; `make` is handed what to call once the page has answered. Nil, the
+    /// verification lost, when there is no controller to show the stage over, or the stage up was taken from under it
+    /// (dismissed by the app while covered, so it never saw itself go).
+    @MainActor private func present(_ make: (CGFloat, @escaping (Shown) -> Void) -> WebPage) -> Shown? {
+        let stage: StageController
+        if let up = self.stage {
+            guard up.presentingViewController != nil || up.from?.presentedViewController === up else {
+                self.stage = nil
+                up.gone()
+                lost()
+                return nil
+            }
+            stage = up
+        } else {
+            guard var from = top() else {
+                lost()
+                return nil
+            }
+            while let next = from.presentedViewController, !next.isBeingDismissed { from = next }
+            stage = StageController()
+            stage.from = from
+            stage.onGone = { [weak self, weak stage] in if self?.stage === stage { self?.stage = nil } }
+            stage.onLost = lost
+            self.stage = stage
+            from.present(stage, animated: true)
+            // UIKit can refuse it (the controller has left the window, or presents another already) with no error
+            // and no completion: the page would wait for an answer no one can give. Refused, the stage is gone.
+            DispatchQueue.main.async { [weak self, weak from] in
+                guard self?.stage === stage, stage.presentingViewController == nil, from?.presentedViewController !== stage else { return }
+                stage.gone()
+            }
+        }
+        let page = make(stage.from?.view.bounds.width ?? stage.view.bounds.width) { [weak self] done in self?.open.removeAll { $0 === done } }
+        open.append(page)
+        stage.show(page)
+        return page
+    }
+
+    func dismissAll() async {
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                self.open.forEach { $0.close() }
+                guard let stage = self.stage else { return c.resume() }
+                self.stage = nil
+                stage.gone()
+                guard let from = stage.from, from.presentedViewController === stage else { return c.resume() }
+                // Waited on, so verify returns with nothing of ours presented: the app's next present is not refused.
+                dismissPresented(by: from) { c.resume() }
+            }
+        }
     }
 
     /// On the main thread: `screen` over the top-most controller, or nil when there is none to show it over.
@@ -326,11 +425,6 @@ final class ScreenController: UIViewController, Shown {
         guard let r = reply else { return }
         reply = nil
         guard let from, from.presentedViewController === self else { return r(self, a) }
-        if a, screen.answersOnTap {
-            // The page behind the notice loads meanwhile; its presentation waits for this dismissal itself.
-            r(self, a)
-            return dismissPresented(by: from) {}
-        }
         dismissPresented(by: from) { r(self, a) }
     }
 }

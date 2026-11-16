@@ -5,6 +5,49 @@ Every change a partner can notice, newest first. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release that changes the public API is at
 least a minor release, and one whose entry has a `### Breaking` section is a major release.
 
+## [2.2.0] - 2026-11-14
+
+### Changed
+- `verify`'s screens: the platform list, then a consent screen per platform. The list shows every platform
+  your app offered, each with its logo and how it ended: available, verified, failed, or to try again; the
+  user runs the ones they choose, in any order, and taps Done when they are done. A platform runs only once
+  its consent screen is accepted: what the platform's page reads, as its operator-signed pack declares it
+  (the same pack the run then runs), our backend's text around it (that the login never leaves the device,
+  how it works), both checkboxes, Terms and Privacy linked. Declined, the platform does not run and the list
+  comes back. A pack that cannot be had shows no consent screen and the platform can be tried again; a pack
+  refused, or one that declares nothing it reads, is final. The intro, next, failed and finish screens are gone, and so is the
+  sign-in notice before each platform's page: the consent screen says what the page reads. The pages are
+  native on both platforms, the same layout, in Cr3dentials' colors; of your `ZktlsTheme` they take the logo,
+  shown at the top, and their footer reads "Powered by Cr3dentials". They stay up from the first page to the
+  end of the verification, your app never showing through between them.
+- A platform whose run failed before its sign-in step because the connection broke off or the bundles could
+  not be had can be tried again from the list; any other failure is final.
+- The platform list shows for one platform offered too, so `verify` returns when the user taps Done, not
+  when the platform's run ends.
+- `verify` fetches what a platform's run needs while the list is up: the trust and policy bundles (side by
+  side, no longer one after the other) and the pack of each platform on offer. The consent screen and the
+  platform's page follow the user's tap at once, where the page took 2 to 4 seconds on a mobile network. A
+  user who stops at a screen stops its fetches; nothing they fetched is used.
+- Done on the list shows it is working (up to 10 seconds, while our backend is told how the platforms ended)
+  and takes no more taps.
+- If the screens go away without the user's answer (on Android, the activity recreated by a rotation or a
+  configuration change your app does not handle; on iOS, your app dismissing them, or UIKit refusing to show
+  them), `verify` throws `Cancelled` rather than returning an outcome that reads as the user's Done.
+- iOS: `verify` returns once its screens are dismissed, so your app can present at once.
+- iOS: the xcframework is signed with Cr3dentials' own Apple Distribution certificate, Team ID
+  `5RPDZZ37QL`, where earlier releases were signed by team `R8287QD4F7`. Xcode remembers who signed a
+  binary framework and flags the change when you update: accept the new signature in the framework's
+  inspector once `codesign -dv ZktlsSDKFFI.xcframework` prints `TeamIdentifier=5RPDZZ37QL`.
+- iOS: the in-app browser's http block compiles and WebKit starts while the platform's consent screen is up,
+  where 2.1.0 and 2.1.1 did both behind the sign-in notice, which is gone. Nothing loads before the user
+  agrees; a declined consent screen drops what it readied.
+- Strings: `list.title`, `list.subtitle`, `list.verified`, `list.failed`, `list.retry`, `list.retryDetail`,
+  `list.privacy`, `list.done`, `list.footer`, `consent.agree`, `consent.terms`, `consent.privacy`,
+  `consent.itemsTitle`, `consent.close` and `consent.working` are new; `intro.*`, `next.*`, `failed.*`,
+  `finish.*` and `disclosure.*` are gone (a translation that still names them is ignored). `refusal.*` stays.
+  A translation that is blank, or drops a word in braces the English has (`consent.agree`'s `{terms}` and
+  `{privacy}` are its links), is ignored for that key.
+
 ## [2.1.1] - 2026-11-10
 
 ### Changed
