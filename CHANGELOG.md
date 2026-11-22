@@ -5,6 +5,13 @@ Every change a partner can notice, newest first. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a release that changes the public API is at
 least a minor release, and one whose entry has a `### Breaking` section is a major release.
 
+## [2.3.0] - 2026-11-22
+
+### Added
+- Checks that read an account ID as a hash: a check's attested read can declare a platform's user ID, which
+  the attester returns only as its hash (`zktls.idhash.v1`), never the ID itself. Update to 2.3.0 before any
+  check you run uses one: an older SDK refuses a policy bundle that holds such a check, and with it every check.
+
 ## [2.2.0] - 2026-11-14
 
 ### Changed
